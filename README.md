@@ -66,6 +66,8 @@ SSE parser đọc UTF-8 incremental, CR/LF/CRLF, comment heartbeat và multiline
 
 Markdown dùng **marked 17.0.5** + **DOMPurify 3.3.0**, vendored trong `public/vendor` cùng license, không cần CDN khi sử dụng. Render public content riêng với progress/evidence. Unknown blocks bị bỏ qua; không gọi provenance hoặc stringify payload nội bộ. BAR không âm hiển thị bar; dạng chart khác hiển thị bảng giá trị để giữ ý nghĩa dữ liệu. Table giới hạn 200 dòng, evidence card 25 records, chart 100 categories và ghi rõ giới hạn hiển thị.
 
+UI cũng chạy trên HTTP qua IP máy chủ: UUID dùng `crypto.getRandomValues` khi `randomUUID` không có; fingerprint danh tính dùng **js-sha256 0.11.1** (MIT, vendored) khi `crypto.subtle` không có. Các scope lịch sử vẫn dùng cùng SHA-256 trên HTTP/HTTPS.
+
 ## Proxy và triển khai
 
 Node proxy local `/backend/{goose|dsh}/api/chat/...` chuyển stream và auth tới URL cố định từ env, không nhận arbitrary target từ browser. Auth header/cookie được chuyển tiếp, secrets không log, dữ liệu chat không được cache. Mặc định server chỉ lắng nghe `127.0.0.1`.
@@ -85,3 +87,36 @@ PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node test/browser-smoke.mjs
 ```
 
 Kết quả chi tiết và giới hạn live ở `VERIFICATION.md`.
+
+## Chạy trên máy chủ với systemd user
+
+Đặt source ở `~/VNC/VHT-Agent-UI`. Cần Node22+ trong PATH hoặc tại `~/.local/share/vht-node/current/bin/node` (cài bản chính thức từ nodejs.org và kiểm tra SHASUMS256).
+
+Ví dụ backend đang chạy cùng máy ở cổng5062, UI mở cổng5173:
+
+```dotenv
+VHT_BACKEND_URL=http://127.0.0.1:5062
+VHT_DSH_BACKEND_URL=http://127.0.0.1:5062
+HOST=0.0.0.0
+PORT=5173
+```
+
+Ghi các dòng trên vào `.env`, rồi chạy:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/vht-agent-ui.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now vht-agent-ui.service
+loginctl enable-linger "$USER"
+```
+
+UI tự chạy lại khi tiến trình dừng và khởi động cùng user manager sau reboot. Linger giữ service hoạt động khi đăng xuất; một số máy cần admin bật tùy chính sách.
+
+```bash
+systemctl --user status vht-agent-ui.service
+journalctl --user -u vht-agent-ui.service -n 50 --no-pager
+systemctl --user restart vht-agent-ui.service
+```
+
+Mở `http://<server-ip>:5173`. UI proxy tới backend nội bộ và sử dụng auth đang được backend cấu hình. UUID/history có fallback cho HTTP qua IP. Với deployment Internet, cấu hình reverse proxy HTTPS và cơ chế auth tương ứng.

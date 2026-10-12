@@ -1,6 +1,6 @@
 # UI verification 12 October 2026
 
-**12 Node checks + 12 Chromium browser checks PASS. No browser page errors.** UI served at `http://127.0.0.1:5173` (HTTP 200). The original integration DOCX is unchanged.
+**13 Node checks + 13 Chromium browser checks PASS. No browser page errors.** UI served at `http://127.0.0.1:5173` (HTTP 200). The original integration DOCX is unchanged.
 
 ## Verified
 
@@ -48,3 +48,7 @@ Chromium installed in the standard `~/.cache/ms-playwright` cache. Runtime depen
 12 October 2026: 12 Node checks and 12 Chromium browser checks PASS. Added event journal/projection bounds and explicit terminal snapshot GET tests. Browser checks prove text replace and append are visible before terminal, events remain after completion/reload, and reading a fresh snapshot adds a new connection sequence without prompt POST. Event details and scroll position survive incoming rendering.
 
 Live read-only verification on the user existing run `ba2cd425-f74b-4796-85af-a1d8d4d07ea1`: Events panel received one v2 terminal `snapshot` from backend, status Completed, text737characters; preserved across reload. `test-results/live-events.png` captures the actual UI. No new prompt or configuration action was sent. Live incremental token delivery was not tested; public text withholding by backend remains valid.
+
+## HTTP origin and server deployment update
+
+13 Node and 13 Chromium checks PASS. Added secure UUID v4 fallback for origins without crypto.randomUUID and browser check without crypto.subtle/randomUUID: UI init, prompt submit and reload work; js-sha256 fallback matches the known SHA256 abc vector. Added user-level systemd deployment unit and startup support for a user-local Node installation. Generated verification files remain local.

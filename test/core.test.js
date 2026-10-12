@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSseParser, consumeSse, initialRun, reduceRun, statusName, isTerminal, ChatApi, observeRun, artifactPath, allowedAction } from '../public/core.js';
+import { createSseParser, consumeSse, initialRun, reduceRun, statusName, isTerminal, ChatApi, observeRun, artifactPath, allowedAction, randomId } from '../public/core.js';
+test('HTTP-origin UUID fallback uses secure random bytes and correct v4 bits', () => {
+  const ids = new Set();
+  const provider = { getRandomValues: bytes => crypto.getRandomValues(bytes) };
+  for (let i = 0; i < 100; i++) { const id = randomId(provider); assert.match(id, /^[a-f\d]{8}-[a-f\d]{4}-4[a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/); ids.add(id); }
+  assert.equal(ids.size, 100);
+});
 
 test('SSE framing tolerates CR/LF/CRLF split anywhere, multiline data and heartbeats', () => {
   const frames = [], parser = createSseParser(frame => frames.push(frame));

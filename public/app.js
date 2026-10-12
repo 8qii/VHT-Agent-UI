@@ -1,6 +1,6 @@
 import { marked } from './vendor/marked.js';
 import DOMPurify from './vendor/purify.js';
-import { ChatApi, initialRun, observeRun, isTerminal, statusName, allowedAction, artifactPath } from './core.js';
+import { ChatApi, initialRun, observeRun, isTerminal, statusName, allowedAction, artifactPath, randomId } from './core.js';
 
 const $ = selector => document.querySelector(selector);
 const ICONS = {
@@ -67,7 +67,8 @@ function persistSoon() { clearTimeout(storageTimer); storageTimer = setTimeout(s
 async function loadScope() {
   selection++; observer?.abort(); clearTimeout(storageTimer); sending = false;
   const identity = prefs.mode === 'bearer' ? authToken : prefs.mode === 'demo' ? prefs.demoUser : 'cookie';
-  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode([prefs.backend, prefs.directUrl || config.targets[prefs.backend], prefs.mode, identity].join('|')));
+  const input = new TextEncoder().encode([prefs.backend, prefs.directUrl || config.targets[prefs.backend], prefs.mode, identity].join('|'));
+  const bytes = crypto.subtle ? await crypto.subtle.digest('SHA-256', input) : globalThis.sha256.arrayBuffer(input);
   scope = 'vht-ui:history:' + [...new Uint8Array(bytes)].map(n => n.toString(16).padStart(2, '0')).join('');
   try { const stored = prefs.mode === 'cookie' ? {} : JSON.parse(localStorage.getItem(scope)) || {}; conversations = Array.isArray(stored.conversations) ? stored.conversations : []; selectedId = stored.selectedId; } catch { conversations = []; selectedId = null; }
   conversations = conversations.filter(c => c && Array.isArray(c.messages));
@@ -343,10 +344,10 @@ async function sendPrompt(event) {
   if (!text || sending || activeRun() || activeConversation()?.pending) return;
   if (prefs.mode === 'bearer' && !authToken) { openSettings(); return; }
   let conversation = activeConversation();
-  if (!conversation) { conversation = { localId: crypto.randomUUID(), title: text.slice(0, 52), messages: [], createdAt: new Date().toISOString() }; conversations.unshift(conversation); selectedId = conversation.localId; }
-  const assistantId = crypto.randomUUID();
+  if (!conversation) { conversation = { localId: randomId(), title: text.slice(0, 52), messages: [], createdAt: new Date().toISOString() }; conversations.unshift(conversation); selectedId = conversation.localId; }
+  const assistantId = randomId();
   conversation.messages.push({ role: 'user', text }, { role: 'assistant', localId: assistantId });
-  conversation.pending = { text, key: crypto.randomUUID(), assistantId };
+  conversation.pending = { text, key: randomId(), assistantId };
   $('#prompt').value = ''; fitTextarea(); save(); renderHistory(); renderMessages(); $('#chat-scroll').scrollTop = $('#chat-scroll').scrollHeight;
   await submitPending(conversation);
 }
@@ -393,7 +394,7 @@ async function saveSettings(event) {
 }
 function openAction(action, runId) {
   if (!allowedAction(action, runId) || latestState()?.runId !== runId || latestState()?.status !== 'WaitingConfirmation') return;
-  currentAction = { action, runId, selection, key: crypto.randomUUID() };
+  currentAction = { action, runId, selection, key: randomId() };
   $('#action-title').textContent = action.id === 'approve' ? 'Duyệt đề xuất cấu hình' : action.id === 'reject' ? 'Từ chối đề xuất' : 'Chỉnh sửa đề xuất';
   $('#action-description').textContent = action.id === 'approve' ? 'Bạn đang duyệt đề xuất vừa hiển thị. Backend có thể bắt đầu TRY và CREATE theo quyền và điều kiện thực thi hiện có. Kiểm tra đúng thiết bị, candidate và rollback trước khi xác nhận.' : action.id === 'reject' ? 'Đề xuất hiện tại sẽ bị từ chối. Hành động này được gửi đến backend.' : 'Backend sẽ tạo phiên bản mới từ yêu cầu của bạn. Phiên bản mới cần được xem lại và duyệt riêng.';
   $('#revision-field').hidden = action.id !== 'revise'; $('#revision-text').value = ''; $('#action-error').textContent = ''; $('#action-confirm').disabled = false; $('#action-dialog').showModal();
@@ -406,7 +407,7 @@ async function confirmAction(event) {
   $('#action-confirm').disabled = true;
   try {
     if (item.action.id === 'revise') {
-      const conversation = activeConversation(), assistantId = crypto.randomUUID();
+      const conversation = activeConversation(), assistantId = randomId();
       observer?.abort(); conversation.messages.push({ role: 'user', text }, { role: 'assistant', localId: assistantId });
       conversation.pending = { text, key: item.key, assistantId, path: item.action.url, oldRunId: item.runId }; save(); $('#action-dialog').close(); await submitPending(conversation);
     } else {

@@ -1,0 +1,17 @@
+[Unit]
+Description=VHT Agent Chat UI
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/VNC/VHT-Agent-UI
+ExecStart=%h/VNC/VHT-Agent-UI/start.sh
+Restart=always
+RestartSec=3
+TimeoutStopSec=10
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

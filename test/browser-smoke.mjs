@@ -191,6 +191,18 @@ try {
     await mp.locator('#sidebar-overlay').click({ position: { x: 350, y: 400 } }); await mp.locator('.suggestion').first().click(); assert((await mp.locator('#prompt').inputValue()).includes('BGP'));
     await mobile.close();
   });
+  await check('HTTP-origin crypto fallback starts UI, sends prompt, restores history and SHA256 is correct', async () => {
+    const httpContext = await browser.newContext();
+    await httpContext.addInitScript(() => { Object.defineProperty(crypto, 'subtle', { value: undefined }); Object.defineProperty(crypto, 'randomUUID', { value: undefined }); });
+    const hp = await httpContext.newPage(); hp.on('pageerror', e => errors.push(e.message));
+    await hp.goto(origin); await hp.getByText('Backend sẵn sàng', { exact: true }).waitFor();
+    assert.equal(await hp.evaluate(() => sha256('abc')), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+    await hp.locator('#prompt').fill('HTTP crypto fallback'); await hp.locator('#send-button').click();
+    await hp.locator('.download-button').waitFor();
+    await hp.reload(); await hp.locator('.download-button').waitFor();
+    assert.equal(submissions.filter(s => s.text === 'HTTP crypto fallback').length, 1);
+    await httpContext.close();
+  });
   assert.deepEqual(errors, []);
   await writeFile(new URL('browser-results.json', output), JSON.stringify({ passed: results, pageErrors: errors, submissions: submissions.length, executionCalls, liveAgent: 'NOT_RUN' }, null, 2));
   console.log(`${results.length} browser checks passed; live agent NOT_RUN.`);
