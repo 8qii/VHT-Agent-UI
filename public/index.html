@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#faf9f7">
+  <meta name="description" content="Trợ lý AI cho hệ thống mạng VHT">
+  <title>VHT · Agent Workspace</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="/" aria-label="VHT Agent trang chủ"><span class="brand-logo">VHT<span class="brand-dot"></span></span><span class="brand-divider"></span><span class="brand-caption">AGENT</span></a>
+      <button class="new-chat" id="new-chat"><span data-icon="plus"></span> Cuộc trò chuyện mới <kbd>⌘ K</kbd></button>
+      <div class="nav-section">KHÔNG GIAN LÀM VIỆC</div>
+      <div class="nav-current"><span data-icon="message"></span> Trợ lý AI <span class="nav-count" id="chat-count">0</span></div>
+      <div class="history-heading"><span>GẦN ĐÂY</span><span data-icon="clock"></span></div>
+      <nav id="history" class="history" aria-label="Lịch sử trò chuyện"></nav>
+      <div class="sidebar-bottom">
+        <div class="connection-card"><span class="status-dot" id="health-dot"></span><div><strong id="health-label">Đang kiểm tra kết nối</strong><span id="backend-caption">VHT-Agent-Backend</span></div><button id="health-check" class="icon-button" aria-label="Kiểm tra lại kết nối" title="Kiểm tra lại"><span data-icon="refresh"></span></button></div>
+        <button class="profile-button" id="settings-open"><span class="user-avatar">Q</span><span><strong>Workspace của bạn</strong><small id="owner-caption">Development</small></span><span data-icon="settings"></span></button>
+      </div>
+    </aside>
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-left"><button class="icon-button menu-toggle" id="menu-toggle" aria-label="Mở danh sách trò chuyện"><span data-icon="panel"></span></button><span class="breadcrumb">Workspace</span><span class="breadcrumb-slash">/</span><strong id="conversation-title">Trợ lý AI</strong></div>
+        <div class="topbar-right"><button class="events-toggle" id="events-toggle" aria-pressed="false"><span data-icon="activity"></span> Events</button><button class="backend-button" id="backend-open"><span data-icon="layers"></span><span id="backend-label">VHT Backend</span><span data-icon="chevron"></span></button></div>
+      </header>
+      <div class="chat-scroll" id="chat-scroll">
+        <section class="welcome" id="welcome">
+          <div class="welcome-mark"><span data-icon="sparkles"></span></div>
+          <div class="eyebrow">VHT AI AGENT</div>
+          <h1>Cùng bạn hiểu rõ<br><span>hệ thống mạng.</span></h1>
+          <p>Tra cứu kiến thức, tìm hiểu hiện trạng và tạo báo cáo.<br>Bắt đầu bằng một câu hỏi, agent sẽ xử lý phần còn lại.</p>
+          <div class="suggestions">
+            <button class="suggestion" data-prompt="Giải thích BGP là gì và khi nào nên sử dụng."><span class="suggestion-icon" data-icon="book"></span><strong>Tra cứu kiến thức</strong><span>Tìm câu trả lời từ tài liệu của bạn</span><span class="suggestion-arrow" data-icon="arrow-up-right"></span></button>
+            <button class="suggestion" data-prompt="Cho tôi tổng quan danh sách thiết bị trong inventory và trạng thái hiện có."><span class="suggestion-icon" data-icon="network"></span><strong>Tìm hiểu hệ thống</strong><span>Khám phá thiết bị và hiện trạng mạng</span><span class="suggestion-arrow" data-icon="arrow-up-right"></span></button>
+            <button class="suggestion" data-prompt="Xuất danh sách thiết bị trong inventory thành file Excel."><span class="suggestion-icon" data-icon="chart"></span><strong>Tạo báo cáo</strong><span>Tổng hợp dữ liệu, tải về khi cần</span><span class="suggestion-arrow" data-icon="arrow-up-right"></span></button>
+          </div>
+          <div class="welcome-note"><span data-icon="command"></span> Hỏi tự nhiên. Tiếp tục trong cùng cuộc trò chuyện.</div>
+        </section>
+        <section class="messages" id="messages" aria-label="Nội dung trò chuyện"></section>
+      </div>
+      <div class="composer-area">
+        <div class="session-note" id="session-note" role="status"></div>
+        <form class="composer" id="composer">
+          <label class="sr-only" for="prompt">Tin nhắn cho VHT Agent</label>
+          <textarea id="prompt" rows="1" maxlength="20000" placeholder="Bạn muốn tìm hiểu điều gì?" autocomplete="off"></textarea>
+          <div class="composer-bottom"><span class="composer-agent"><span class="agent-small" data-icon="sparkles"></span> VHT Agent <span class="composer-separator">·</span><span id="composer-status">Sẵn sàng trò chuyện</span></span><div class="composer-actions"><span class="shortcut">Enter để gửi</span><button type="button" id="cancel-run" class="stop-button" hidden><span data-icon="square"></span> Dừng</button><button type="submit" id="send-button" class="send-button" aria-label="Gửi tin nhắn" disabled><span data-icon="arrow-up"></span></button></div></div>
+        </form>
+        <p class="composer-footnote">AI có thể mắc lỗi. Hãy kiểm tra thông tin quan trọng trước khi sử dụng.</p>
+      </div>
+    </main>
+  </div>
+  <dialog id="settings-dialog" class="settings-dialog">
+    <form id="settings-form">
+      <div class="dialog-heading"><div><div class="eyebrow">WORKSPACE</div><h2>Kết nối agent</h2></div><button type="button" class="icon-button close-dialog" aria-label="Đóng"><span data-icon="x"></span></button></div>
+      <p class="dialog-description">Chọn backend đang chạy và tài khoản dùng cho cuộc trò chuyện.</p>
+      <label for="backend-select">Backend</label>
+      <div class="backend-options"><label class="backend-option"><input type="radio" name="backend" value="goose" checked><span><strong>VHT Backend</strong><small>VHT-Agent-Backend</small></span></label><label class="backend-option"><input type="radio" name="backend" value="dsh"><span><strong>VHT Backend DSH</strong><small>VHT-Agent-Backend-DSH</small></span></label></div>
+      <div class="target-info"><span data-icon="link"></span><span id="target-url"></span></div>
+      <label for="auth-mode">Xác thực</label><select id="auth-mode"><option value="demo">Demo user (development)</option><option value="bearer">Bearer token</option><option value="cookie">Cookie / phiên đăng nhập</option></select>
+      <div id="demo-field"><label for="demo-user">Demo user ID</label><input id="demo-user" placeholder="User ID" autocomplete="off"><small class="field-help">Gửi qua header X-Demo-User. Backend cần bật chế độ development.</small></div>
+      <div id="bearer-field" hidden><label for="bearer-token">Access token</label><input id="bearer-token" type="password" autocomplete="off" placeholder="Nhập access token"><small class="field-help">Token chỉ được giữ trong bộ nhớ của tab này.</small></div>
+      <details class="advanced"><summary>Kết nối trực tiếp đến URL khác</summary><label for="direct-url">Backend URL (tùy chọn)</label><input id="direct-url" type="url" placeholder="https://agent.example.com"><small class="field-help">Để trống để dùng proxy local. Kết nối trực tiếp cần backend cho phép CORS và phương thức xác thực tương ứng.</small></details>
+      <p class="settings-error" id="settings-error" role="alert"></p>
+      <div class="dialog-footer"><button type="button" class="text-button" id="clear-history">Xóa lịch sử local</button><button type="submit" class="primary-button">Lưu kết nối <span data-icon="arrow-up-right"></span></button></div>
+    </form>
+  </dialog>
+  <dialog id="action-dialog" class="settings-dialog">
+    <form id="action-form"><div class="dialog-heading"><h2 id="action-title">Xem lại hành động</h2><button type="button" class="icon-button close-dialog" aria-label="Đóng"><span data-icon="x"></span></button></div><p id="action-description"></p><div id="revision-field" hidden><label for="revision-text">Yêu cầu thay đổi</label><textarea id="revision-text" rows="4" placeholder="Mô tả phần bạn muốn chỉnh sửa"></textarea></div><p class="settings-error" id="action-error" role="alert"></p><div class="dialog-footer"><button type="button" class="text-button close-dialog">Quay lại</button><button type="submit" class="primary-button" id="action-confirm">Xác nhận</button></div></form>
+  </dialog>
+  <div id="toast" class="toast" role="status"></div>
+</body>
+</html>
