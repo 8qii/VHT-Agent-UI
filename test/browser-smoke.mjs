@@ -99,8 +99,9 @@ try {
   await page.goto(origin);
   console.log('PAGE_LOADED', await page.locator('#health-label').innerText(), await page.locator('#health-label').getAttribute('title'));
   await page.getByText('Backend sẵn sàng', { exact: true }).waitFor();
-  await check('Desktop welcome and no horizontal overflow', async () => {
-    assert.equal(await page.locator('.suggestion').count(), 3);
+  await check('Desktop opens a plain empty chat without welcome hero or suggestion cards', async () => {
+    assert.equal(await page.locator('#welcome,.suggestion').count(), 0);
+    assert.equal(await page.locator('#messages').innerText(), '');
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.screenshot({ path: new URL('desktop.png', output).pathname });
   });
@@ -169,26 +170,26 @@ try {
   });
   await check('Backend switch separates history and sends shared API contract', async () => {
     await page.locator('#backend-open').click(); await page.locator('input[name=backend][value=dsh]').check(); await page.getByRole('button', { name: 'Lưu kết nối' }).click();
-    await page.locator('#welcome').waitFor({ state: 'visible' }); assert.equal(await page.locator('.history-item').count(), 0); await send('DSH same flow'); await completed();
+    await page.waitForFunction(() => document.querySelector('#messages').children.length === 0); assert.equal(await page.locator('.history-item').count(), 0); await send('DSH same flow'); await completed();
   });
   await check('Bearer token stays in memory; identity change separates and restores owner history', async () => {
     const token = 'browser-fixture-private-token';
     await page.locator('#backend-open').click(); await page.locator('#auth-mode').selectOption('bearer'); await page.locator('#bearer-token').fill(token); await page.getByRole('button', { name: 'Lưu kết nối' }).click();
-    await page.locator('#welcome').waitFor({ state: 'visible' }); await send('Bearer flow'); await completed();
+    await page.waitForFunction(() => document.querySelector('#messages').children.length === 0); await send('Bearer flow'); await completed();
     assert(auth.includes('Bearer ' + token));
     assert(!(await page.evaluate(() => JSON.stringify(localStorage))).includes(token));
     await page.locator('#backend-open').click(); await page.locator('#auth-mode').selectOption('demo'); await page.locator('#demo-user').fill('different-owner'); await page.getByRole('button', { name: 'Lưu kết nối' }).click();
-    await page.locator('#welcome').waitFor({ state: 'visible' }); assert.equal(await page.locator('.history-item').count(), 0);
+    await page.waitForFunction(() => document.querySelector('#messages').children.length === 0); assert.equal(await page.locator('.history-item').count(), 0);
     await page.locator('#backend-open').click(); await page.locator('#auth-mode').selectOption('demo'); await page.locator('#demo-user').fill('00000000-0000-0000-0000-000000000001'); await page.getByRole('button', { name: 'Lưu kết nối' }).click();
     await page.locator('.history-item').waitFor(); await completed(); assert((await page.locator('.user-bubble').innerText()).includes('DSH same flow'));
   });
-  await check('Mobile welcome/menu/composer fit a 390px viewport', async () => {
+  await check('Mobile empty chat/menu/composer fit a 390px viewport', async () => {
     const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, deviceScaleFactor: 1 });
     const mp = await mobile.newPage(); mp.on('pageerror', error => errors.push(error.message)); await mp.goto(origin); await mp.getByText('Backend sẵn sàng', { exact: true }).waitFor();
     assert(await mp.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await mp.screenshot({ path: new URL('mobile.png', output).pathname });
     await mp.locator('#menu-toggle').click(); await mp.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().left === 0);
-    await mp.locator('#sidebar-overlay').click({ position: { x: 350, y: 400 } }); await mp.locator('.suggestion').first().click(); assert((await mp.locator('#prompt').inputValue()).includes('BGP'));
+    await mp.locator('#sidebar-overlay').click({ position: { x: 350, y: 400 } }); await mp.locator('#prompt').fill('BGP'); assert(await mp.locator('#send-button').isEnabled());
     await mobile.close();
   });
   await check('HTTP-origin crypto fallback starts UI, sends prompt, restores history and SHA256 is correct', async () => {

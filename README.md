@@ -37,7 +37,7 @@ Sau khi đổi `.env`, khởi động lại UI. URL cũng có thể có deployme
 - Bearer: token chỉ giữ trong bộ nhớ của tab, không ghi localStorage hoặc URL. Khi tải lại, nhập token để khôi phục lịch sử đúng tài khoản.
 - Cookie: gửi `credentials: include`. Lịch sử chỉ giữ trong tab vì UI không biết danh tính cookie để phân vùng dữ liệu local. Cookie của origin backend khác không tự chuyển sang origin proxy; dùng kết nối trực tiếp/deployment cùng origin thích hợp và kiểm tra auth thật.
 - Nhập tin nhắn, **Enter** gửi, **Shift+Enter** xuống dòng; **Ctrl+K / ⌘K** mở chat mới.
-- Gợi ý chỉ điền nội dung vào ô nhập. Mọi câu hỏi dùng cùng chat flow, không chọn capability hay phân loại prompt.
+- Mọi câu hỏi dùng cùng chat flow, không chọn capability hay phân loại prompt.
 - Lịch sử local cho demo/bearer tách theo endpoint, backend, mode và fingerprint danh tính. Reload khôi phục run đang chạy bằng GET; không POST prompt lại.
 - Lần gửi bị mất receipt có nút **Thử lại lần gửi này**, giữ session và idempotency key. Pending submission được lưu trước POST.
 - **Dừng** gửi cancellation API thật; đóng tab hoặc ngắt stream không hủy run.

@@ -240,7 +240,7 @@ function renderEvents(state) {
 function renderMessages() {
   const scroll = $('#chat-scroll'), nearBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 130;
   const eventScroll = new Map([...document.querySelectorAll('.event-list')].map(node => [node.dataset.runId, { top: node.scrollTop, bottom: node.scrollHeight - node.scrollTop - node.clientHeight < 40 }]));
-  const conversation = activeConversation(); $('#welcome').hidden = Boolean(conversation?.messages.length);
+  const conversation = activeConversation();
   $('#messages').replaceChildren();
   for (const message of conversation?.messages || []) {
     const node = el('article', `message ${message.role}`);
@@ -433,7 +433,6 @@ $('#prompt').addEventListener('input', fitTextarea);
 $('#prompt').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!$('#send-button').disabled) $('#composer').requestSubmit(); } });
 document.addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); newChat(); } });
 $('.new-chat kbd').textContent = navigator.platform.includes('Mac') ? '⌘ K' : 'Ctrl K';
-document.querySelectorAll('.suggestion').forEach(node => node.addEventListener('click', () => { $('#prompt').value = node.dataset.prompt; fitTextarea(); $('#prompt').focus(); }));
 $('#settings-open').addEventListener('click', openSettings); $('#backend-open').addEventListener('click', openSettings); $('#settings-form').addEventListener('submit', saveSettings);
 $('#auth-mode').addEventListener('change', updateSettingsFields); document.querySelectorAll('input[name=backend]').forEach(node => node.addEventListener('change', updateSettingsFields));
 document.querySelectorAll('.close-dialog').forEach(node => node.addEventListener('click', () => node.closest('dialog').close()));
