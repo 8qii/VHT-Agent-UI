@@ -27,7 +27,7 @@ export function createServer() {
       res.end(JSON.stringify({ targets }));
       return;
     }
-    const proxy = url.pathname.match(/^\/backend\/(goose|dsh)(\/api\/chat(?:\/.*)?|\/health\/ready)$/);
+    const proxy = url.pathname.match(/^\/backend\/(goose|dsh)(\/api\/(?:chat|library)(?:\/.*)?|\/health\/ready)$/);
     if (proxy) {
       // Browser supplies owner authentication. Never read the workspace's private env.
       if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) {
@@ -37,13 +37,13 @@ export function createServer() {
       target.pathname = target.pathname.replace(/\/$/, '') + proxy[2];
       target.search = url.search;
       const headers = {};
-      for (const key of ['accept', 'content-type', 'authorization', 'x-demo-user', 'cookie', 'if-none-match']) {
+      for (const key of ['accept', 'content-type', 'content-length', 'authorization', 'x-demo-user', 'cookie', 'if-none-match', 'idempotency-key']) {
         if (req.headers[key]) headers[key] = req.headers[key];
       }
       const transport = target.protocol === 'https:' ? https : http;
       const upstream = transport.request(target, { method: req.method, headers }, response => {
         const out = {};
-        for (const key of ['content-type', 'content-disposition', 'content-length', 'etag', 'retry-after']) {
+        for (const key of ['content-type', 'content-disposition', 'content-length', 'etag', 'retry-after', 'location']) {
           if (response.headers[key]) out[key] = response.headers[key];
         }
         res.writeHead(response.statusCode, { ...out, 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });

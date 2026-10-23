@@ -37,9 +37,10 @@
       <div class="composer-area">
         <div class="session-note" id="session-note" role="status"></div>
         <form class="composer" id="composer">
+          <div class="file-chips" id="file-chips" aria-label="Tài liệu trong cuộc trò chuyện" hidden></div>
           <label class="sr-only" for="prompt">Tin nhắn cho VHT Agent</label>
           <textarea id="prompt" rows="1" maxlength="20000" placeholder="Bạn muốn tìm hiểu điều gì?" autocomplete="off"></textarea>
-          <div class="composer-bottom"><span class="composer-agent"><span class="agent-small" data-icon="sparkles"></span> VHT Agent <span class="composer-separator">·</span><span id="composer-status">Sẵn sàng trò chuyện</span></span><div class="composer-actions"><span class="shortcut">Enter để gửi</span><button type="button" id="cancel-run" class="stop-button" hidden><span data-icon="square"></span> Dừng</button><button type="submit" id="send-button" class="send-button" aria-label="Gửi tin nhắn" disabled><span data-icon="arrow-up"></span></button></div></div>
+          <div class="composer-bottom"><span class="composer-agent"><span class="agent-small" data-icon="sparkles"></span> VHT Agent <span class="composer-separator">·</span><span id="composer-status">Sẵn sàng trò chuyện</span></span><div class="composer-actions"><span class="shortcut">Enter để gửi</span><input type="file" id="file-input" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden><button type="button" id="attach-button" class="attach-button" aria-label="Đính kèm tài liệu PDF/DOCX" title="Đính kèm tài liệu PDF/DOCX" hidden><span data-icon="paperclip"></span></button><button type="button" id="cancel-run" class="stop-button" hidden><span data-icon="square"></span> Dừng</button><button type="submit" id="send-button" class="send-button" aria-label="Gửi tin nhắn" disabled><span data-icon="arrow-up"></span></button></div></div>
         </form>
         <p class="composer-footnote">AI có thể mắc lỗi. Hãy kiểm tra thông tin quan trọng trước khi sử dụng.</p>
       </div>

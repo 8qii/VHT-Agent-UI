@@ -94,33 +94,49 @@ export async function consumeSse(response, onEvent, signal) {
 }
 
 export class ApiError extends Error {
-  constructor(message, status, retryAfter = 0) { super(message); this.status = status; this.retryAfter = retryAfter; }
+  constructor(message, status, retryAfter = 0, code = null) { super(message); this.status = status; this.retryAfter = retryAfter; this.code = code; }
 }
 export class ChatApi {
   constructor(base, headers = {}, fetcher = (...args) => fetch(...args)) { this.base = base.replace(/\/$/, ''); this.headers = headers; this.fetcher = fetcher; }
-  async request(path, { method = 'GET', body, signal, raw = false } = {}) {
-    if (!path.startsWith('/api/chat/') && path !== '/health/ready') throw new Error('Unsupported API path');
-    const timeout = raw && path.endsWith('/events') ? undefined : AbortSignal.timeout(30000);
+  async request(path, { method = 'GET', body, form, headers = {}, signal, raw = false, timeoutMs = 30000 } = {}) {
+    if (!path.startsWith('/api/chat/') && !path.startsWith('/api/library/') && path !== '/health/ready') throw new Error('Unsupported API path');
+    const timeout = raw && path.endsWith('/events') ? undefined : AbortSignal.timeout(timeoutMs);
     const combined = signal && timeout ? AbortSignal.any([signal, timeout]) : signal || timeout;
+    // FormData: never set Content-Type so the browser writes the multipart boundary.
     const response = await this.fetcher(this.base + path, {
       method, signal: combined, credentials: 'include',
-      headers: { ...this.headers, ...(body ? { 'Content-Type': 'application/json' } : {}), ...(raw && path.endsWith('/events') ? { Accept: 'text/event-stream' } : {}) },
-      body: body ? JSON.stringify(body) : undefined,
+      headers: { ...this.headers, ...headers, ...(body ? { 'Content-Type': 'application/json' } : {}), ...(raw && path.endsWith('/events') ? { Accept: 'text/event-stream' } : {}) },
+      body: form || (body ? JSON.stringify(body) : undefined),
     });
     if (!response.ok) {
       const text = await response.text();
-      let detail;
-      try { const error = JSON.parse(text); detail = error.error || error.errorCode || error.code || error.detail || error.title; } catch {}
+      let detail, code = null;
+      try { const error = JSON.parse(text); code = typeof error.code === 'string' ? error.code : null; detail = error.error || error.errorCode || error.code || error.detail || error.title; } catch {}
       const after = response.headers.get('retry-after');
       const seconds = /^\d+$/.test(after || '') ? Number(after) : Math.max(0, (Date.parse(after) - Date.now()) / 1000);
-      throw new ApiError(typeof detail === 'string' ? detail : `API trả HTTP ${response.status}`, response.status, Number.isFinite(seconds) ? seconds * 1000 : 0);
+      throw new ApiError(typeof detail === 'string' ? detail : `API trả HTTP ${response.status}`, response.status, Number.isFinite(seconds) ? seconds * 1000 : 0, code);
     }
     return raw ? response : response.status === 204 ? null : response.json();
   }
   createSession(title, signal) { return this.request('/api/chat/sessions', { method: 'POST', body: { title }, signal }); }
-  submit(sessionId, pending, signal) { return this.request(`/api/chat/sessions/${encodeURIComponent(sessionId)}/prompts`, { method: 'POST', body: { text: pending.text, idempotencyKey: pending.key }, signal }); }
+  submit(sessionId, pending, signal) { return this.request(`/api/chat/sessions/${encodeURIComponent(sessionId)}/prompts`, { method: 'POST', body: promptBody(pending), signal }); }
   getRun(runId, signal) { return this.request(`/api/chat/runs/${encodeURIComponent(runId)}`, { signal }); }
   getResponse(runId, signal) { return this.request(`/api/chat/runs/${encodeURIComponent(runId)}/response`, { signal }); }
+  capabilities(signal) { return this.request('/api/library/capabilities', { signal }); }
+  uploadDocument(file, key, signal) {
+    const form = new FormData(); form.append('file', file, file.name);
+    return this.request('/api/library/uploads', { method: 'POST', form, headers: { 'Idempotency-Key': key }, signal, timeoutMs: 180000 });
+  }
+  getFile(fileId, signal) { return this.request(`/api/library/files/${encodeURIComponent(fileId)}`, { signal }); }
+  attach(sessionId, fileId, signal) { return this.request(`/api/chat/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(fileId)}`, { method: 'PUT', signal }); }
+  listAttachments(sessionId, signal) { return this.request(`/api/chat/sessions/${encodeURIComponent(sessionId)}/attachments`, { signal }); }
+  detach(sessionId, fileId, signal) { return this.request(`/api/chat/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(fileId)}`, { method: 'DELETE', signal }); }
+}
+// Omit attachmentFileIds for text-only prompts so the request stays identical to the old API.
+export function promptBody(pending) {
+  const body = { text: pending.text, idempotencyKey: pending.key };
+  if (Array.isArray(pending.attachmentFileIds) && pending.attachmentFileIds.length) body.attachmentFileIds = pending.attachmentFileIds;
+  return body;
 }
 
 export function allowedAction(action, runId) {
@@ -128,6 +144,30 @@ export function allowedAction(action, runId) {
 }
 export function artifactPath(url) {
   return typeof url === 'string' && /^\/api\/chat\/artifacts\/[a-f\d-]{36}\/download$/i.test(url) ? url : null;
+}
+export function libraryDownloadPath(url) {
+  return typeof url === 'string' && /^\/api\/library\/files\/[a-f\d-]{36}\/download$/i.test(url) ? url : null;
+}
+
+// Document state as the FE guide describes it: download availability and AI readability are independent.
+export const DOCUMENT_TYPES = { 'application/pdf': 'pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx' };
+export function documentType(file) {
+  const ext = String(file?.name || '').toLowerCase().match(/\.(pdf|docx)$/)?.[1];
+  return ext || null;
+}
+export function fileSettled(file) {
+  return ['available', 'failed', 'unavailable'].includes(file?.availability) && !['pending', 'processing'].includes(file?.agentRead?.status);
+}
+export function canAskAbout(file, caps) {
+  return caps?.agentRead?.enabled === true && file?.agentRead?.status === 'ready';
+}
+export function citationLabel(location) {
+  if (!location || typeof location !== 'object') return 'Không rõ vị trí';
+  const heading = Array.isArray(location.headingPath) && location.headingPath.length ? ` · ${location.headingPath.join(' › ')}` : '';
+  if (location.kind === 'pdf_page' && Number.isInteger(location.pageNumber)) return `Trang ${location.pageNumber}${heading}`;
+  if (location.kind === 'docx_paragraph' && Number.isInteger(location.paragraphNumber)) return `Đoạn ${location.paragraphNumber}${heading}`;
+  if (location.kind === 'docx_table' && Number.isInteger(location.tableNumber)) return `Bảng ${location.tableNumber}${Number.isInteger(location.rowNumber) ? `, dòng ${location.rowNumber}` : ''}${heading}`;
+  return heading ? heading.slice(3) : 'Không rõ vị trí';
 }
 
 const delay = (ms, signal) => new Promise((resolve, reject) => {
@@ -148,7 +188,7 @@ export async function observeRun(api, initial, update, signal, { streamFirst = f
     if (hydrate || isTerminal(status) || status === 'WaitingConfirmation') {
       const response = await api.getResponse(state.runId, signal);
       // Never hydrate private fields or use a successful response to infer completion.
-      emit({ text: response.text ?? '', blocks: response.presentationBlocks || [], actions: response.actions || [], provisional: false, hydrated: true, hydrationError: false });
+      emit({ text: response.text ?? '', blocks: response.presentationBlocks || [], actions: response.actions || [], citations: Array.isArray(response.citations) ? response.citations : [], inputAttachments: Array.isArray(response.inputAttachments) ? response.inputAttachments : [], provisional: false, hydrated: true, hydrationError: false });
       if (isTerminal(status)) emit({ connection: 'closed' });
     }
     return isTerminal(status);

@@ -1,6 +1,6 @@
 import { marked } from './vendor/marked.js';
 import DOMPurify from './vendor/purify.js';
-import { ChatApi, initialRun, observeRun, isTerminal, statusName, allowedAction, artifactPath, randomId } from './core.js';
+import { ChatApi, initialRun, observeRun, isTerminal, statusName, allowedAction, artifactPath, libraryDownloadPath, randomId, documentType, fileSettled, canAskAbout, citationLabel } from './core.js';
 
 const $ = selector => document.querySelector(selector);
 const ICONS = {
@@ -26,6 +26,8 @@ const ICONS = {
   download: '<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>',
   file: '<path d="M14 3H5v18h14V8l-5-5Zm0 0v5h5M8 12h8M8 16h5"/>',
   activity: '<path d="M2 12h5l3-8 4 16 3-8h5"/>',
+  paperclip: '<path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4L15.5 7"/>',
+  check: '<path d="m5 12 5 5 9-10"/>',
 };
 function icon(name) {
   const wrapper = document.createElement('span');
@@ -46,6 +48,30 @@ function publicFields(value) {
 }
 const statusLabels = { Pending: 'Đang chờ', Running: 'Đang xử lý', Uncertain: 'Chưa xác định kết quả', WaitingConfirmation: 'Chờ bạn xác nhận', Executing: 'Đang thực thi', Completed: 'Hoàn thành', Superseded: 'Đã có phiên bản mới', Rejected: 'Đã từ chối', Failed: 'Không hoàn thành', Cancelled: 'Đã dừng', Interrupted: 'Bị gián đoạn' };
 let config, prefs, authToken = '', scope = '', conversations = [], selectedId, observer, selection = 0, sending = false, renderQueued = false, storageTimer, toastTimer, currentAction;
+let caps = null, fileWatch = null;
+const pendingFiles = new Map(); // localKey → File; bytes stay in memory so a retry reuses the same key and content
+const sessionCreates = new Map(); // localId → in-flight createSession, so upload and send never create two sessions
+// Problem Details codes from document-upload-fe-integration.vi.md §8.
+const DOC_ERRORS = {
+  INVALID_IDEMPOTENCY_KEY: 'Khóa idempotency không hợp lệ', DOCUMENT_MULTIPART_REQUIRED: 'Request upload sai định dạng',
+  DOCUMENT_FILE_REQUIRED: 'Thiếu file', DOCUMENT_SINGLE_FILE_REQUIRED: 'Mỗi lần chỉ gửi một file', DOCUMENT_INVALID_MULTIPART: 'Dữ liệu upload bị lỗi',
+  DOCUMENT_EMPTY: 'File rỗng', INVALID_FILE_NAME: 'Tên file không hợp lệ', FILE_NOT_FOUND: 'Không tìm thấy file', SESSION_NOT_FOUND: 'Không tìm thấy cuộc trò chuyện',
+  IDEMPOTENCY_CONFLICT: 'Khóa upload đã dùng cho file khác', DOCUMENT_REQUEST_IN_PROGRESS: 'Lần upload trước vẫn đang chạy, thử lại sau',
+  DOCUMENT_ATTACHMENT_LIMIT: 'Cuộc trò chuyện đã đủ số file, hãy gỡ bớt', FILE_UNAVAILABLE: 'File đã bị xóa hoặc bị từ chối',
+  DOCUMENT_SIZE_LIMIT: 'File vượt dung lượng cho phép', DOCUMENT_FORMAT_UNSUPPORTED: 'Chỉ hỗ trợ PDF hoặc DOCX',
+  DOCUMENT_INVALID_PDF: 'PDF bị hỏng', DOCUMENT_INVALID_DOCX: 'DOCX bị hỏng', DOCUMENT_ENCRYPTED: 'PDF có mật khẩu, hãy dùng bản không mã hóa',
+  DOCUMENT_PAGE_LIMIT: 'PDF quá nhiều trang', DOCUMENT_ARCHIVE_LIMIT: 'DOCX quá lớn khi giải nén', DOCUMENT_UNSAFE_PACKAGE: 'DOCX chứa macro/liên kết ngoài không an toàn',
+  DOCUMENT_QUOTA_EXCEEDED: 'Đã hết dung lượng Library', DOCUMENT_UPLOAD_CONCURRENCY_LIMIT: 'Server đang bận, thử lại sau',
+  DOCUMENT_UPLOAD_DISABLED: 'Backend chưa bật upload', DOCUMENT_ATTACHMENTS_DISABLED: 'Backend chưa bật đính kèm',
+  DOCUMENT_UPLOAD_TIMEOUT: 'Upload quá thời gian, thử lại', DOCUMENT_UPLOAD_UNAVAILABLE: 'Lưu trữ tạm thời lỗi, thử lại', DOCUMENT_UPLOAD_ABANDONED: 'Lần upload cũ đã hết hạn, chọn lại file',
+  DOCUMENT_OBJECT_CORRUPT: 'File lưu trữ bị sai lệch, báo backend', DOCUMENT_SESSION_UNAVAILABLE: 'Database tạm lỗi, thử lại', DOCUMENT_ATTACHMENTS_UNAVAILABLE: 'Database tạm lỗi, thử lại',
+  DOCUMENT_QA_NOT_ENABLED: 'Backend chưa bật hỏi đáp tài liệu', DOCUMENT_ATTACHMENT_SET_INVALID: 'Danh sách file không hợp lệ',
+};
+const docError = error => { const code = error?.code || error?.message; return DOC_ERRORS[code] ? `${DOC_ERRORS[code]} (${code})` : error?.message || 'Lỗi không xác định'; };
+const sleep = (ms, signal) => new Promise((resolve, reject) => {
+  const timer = setTimeout(resolve, ms);
+  signal.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+});
 const openEventRuns = new Set();
 const openEventRows = new Set();
 const connectionLabels = { connecting: 'Đang mở SSE', live: 'SSE trực tiếp', reconnecting: 'SSE đang kết nối lại', polling: 'Theo dõi qua GET', closed: 'SSE đã kết thúc', error: 'Lỗi kết nối' };
@@ -65,7 +91,7 @@ function save() {
 }
 function persistSoon() { clearTimeout(storageTimer); storageTimer = setTimeout(save, 300); }
 async function loadScope() {
-  selection++; observer?.abort(); clearTimeout(storageTimer); sending = false;
+  selection++; observer?.abort(); clearTimeout(storageTimer); sending = false; stopFileWatch(); caps = null;
   const identity = prefs.mode === 'bearer' ? authToken : prefs.mode === 'demo' ? prefs.demoUser : 'cookie';
   const input = new TextEncoder().encode([prefs.backend, prefs.directUrl || config.targets[prefs.backend], prefs.mode, identity].join('|'));
   const bytes = crypto.subtle ? await crypto.subtle.digest('SHA-256', input) : globalThis.sha256.arrayBuffer(input);
@@ -77,10 +103,170 @@ async function loadScope() {
     const message = conversation.messages.find(m => m.localId === conversation.pending.assistantId);
     if (message) message.submitError = 'Lần gửi trước chưa có kết quả xác nhận. Thử lại cùng lần gửi để lấy run hiện có; không tạo yêu cầu mới.';
   }
+  for (const file of conversations.flatMap(c => Array.isArray(c.files) ? c.files : [])) {
+    // File bytes are not persisted; an upload cut by reload must be picked again.
+    if (file.phase === 'uploading' && !pendingFiles.has(file.localKey)) { file.phase = 'upload-error'; file.error = 'Upload bị gián đoạn khi tải lại trang. Hãy chọn lại file.'; }
+    if (file.phase === 'attaching') { file.phase = 'attach-error'; file.error = 'Chưa gắn xong vào chat. Bấm thử lại.'; }
+  }
   if (!activeConversation()) selectedId = conversations[0]?.localId;
-  updateChrome(); renderHistory(); renderMessages(); updateComposer();
+  updateChrome(); renderHistory(); renderMessages(); renderFiles(); updateComposer();
   if (latestState()) startObserver();
   checkHealth();
+  await loadCapabilities();
+  syncAttachments(activeConversation());
+}
+async function loadCapabilities() {
+  const current = scope;
+  try { const value = await api().capabilities(); if (current === scope) caps = value; }
+  catch { if (current === scope) caps = null; }
+  renderFiles(); updateComposer();
+}
+function applyFile(entry, dto) {
+  const value = dto?.file || dto;
+  if (!value) return;
+  entry.fileId = value.id || value.fileId || entry.fileId;
+  for (const key of ['name', 'type', 'sizeBytes', 'availability', 'errorCode', 'agentRead', 'downloadUrl']) if (key in value) entry[key] = value[key];
+}
+// Reload/switch restores the persistent catalog; the local "selected" flag stays per browser tab.
+async function syncAttachments(conversation) {
+  if (!conversation?.sessionId || !caps?.attachments?.enabled) return;
+  const current = scope;
+  try {
+    const result = await api().listAttachments(conversation.sessionId);
+    if (current !== scope) return;
+    const files = Array.isArray(conversation.files) ? conversation.files : [];
+    const known = new Map(files.filter(f => f.fileId).map(f => [f.fileId, f]));
+    const next = files.filter(f => !f.fileId || f.phase !== 'attached');
+    for (const item of result?.items || []) {
+      const entry = known.get(item.fileId) || { localKey: randomId(), selected: false };
+      applyFile(entry, item); entry.phase = 'attached'; entry.error = '';
+      if (!next.includes(entry)) next.push(entry);
+    }
+    conversation.files = next; save();
+    if (activeConversation() === conversation) { renderFiles(); updateComposer(); watchFiles(); }
+  } catch (error) { if (current === scope) toast(`Không lấy được danh sách tài liệu: ${docError(error)}`); }
+}
+function ensureSession(conversation, client) {
+  if (conversation.sessionId) return Promise.resolve(conversation.sessionId);
+  if (!sessionCreates.has(conversation.localId)) {
+    sessionCreates.set(conversation.localId, client.createSession(conversation.title).then(session => {
+      if (!session?.id) throw new Error('Backend không trả session ID.');
+      conversation.sessionId = session.id; save(); return session.id;
+    }).finally(() => sessionCreates.delete(conversation.localId)));
+  }
+  return sessionCreates.get(conversation.localId);
+}
+async function addFiles(list) {
+  if (!list.length) return;
+  if (!caps?.upload?.enabled || !caps?.attachments?.enabled) { toast('Backend chưa bật upload hoặc đính kèm tài liệu.'); return; }
+  if (prefs.mode === 'bearer' && !authToken) { openSettings(); return; }
+  let conversation = activeConversation();
+  if (!conversation) {
+    conversation = { localId: randomId(), title: `Tài liệu: ${list[0].name}`.slice(0, 52), messages: [], createdAt: new Date().toISOString() };
+    conversations.unshift(conversation); selectedId = conversation.localId; renderHistory(); renderMessages();
+  }
+  conversation.files = Array.isArray(conversation.files) ? conversation.files : [];
+  const max = caps.upload.maxUploadBytes, queue = [];
+  for (const file of list) {
+    const entry = { localKey: randomId(), uploadKey: randomId(), name: file.name, type: documentType(file), sizeBytes: file.size, phase: 'uploading', selected: false };
+    // Early checks only save a round trip; backend validation stays the authority.
+    if (!entry.type) { entry.phase = 'upload-error'; entry.error = DOC_ERRORS.DOCUMENT_FORMAT_UNSUPPORTED; }
+    else if (Number.isFinite(max) && file.size > max) { entry.phase = 'upload-error'; entry.error = `${DOC_ERRORS.DOCUMENT_SIZE_LIMIT} (tối đa ${(max / 1048576).toFixed(0)} MB)`; }
+    else { pendingFiles.set(entry.localKey, file); queue.push(entry); }
+    conversation.files.push(entry);
+  }
+  save(); renderFiles();
+  for (const entry of queue) await uploadEntry(conversation, entry); // one upload at a time
+}
+async function uploadEntry(conversation, entry) {
+  const client = api(), current = scope;
+  entry.error = ''; entry.phase = entry.fileId ? 'attaching' : 'uploading'; renderFiles();
+  try {
+    if (!entry.fileId) {
+      const file = pendingFiles.get(entry.localKey);
+      if (!file) throw new Error('Không còn file gốc trong tab này. Hãy chọn lại file.');
+      applyFile(entry, await client.uploadDocument(file, entry.uploadKey));
+      pendingFiles.delete(entry.localKey);
+      entry.phase = 'attaching'; save(); renderFiles();
+    }
+    await ensureSession(conversation, client);
+    applyFile(entry, await client.attach(conversation.sessionId, entry.fileId));
+    const duplicate = conversation.files.find(f => f !== entry && f.fileId === entry.fileId);
+    if (duplicate) conversation.files.splice(conversation.files.indexOf(entry), 1);
+    entry.phase = 'attached';
+  } catch (error) {
+    entry.phase = entry.fileId ? 'attach-error' : 'upload-error'; entry.error = docError(error);
+  }
+  if (current !== scope) return;
+  save(); renderFiles(); updateComposer(); watchFiles();
+}
+function stopFileWatch() { fileWatch?.abort(); fileWatch = null; }
+// Poll with backoff 1,2,4…10s until scan and processing settle; stops when the chat is switched.
+function watchFiles() {
+  const conversation = activeConversation();
+  const waiting = () => (conversation?.files || []).filter(f => f.fileId && f.phase === 'attached' && !fileSettled(f));
+  if (fileWatch || !waiting().length) return;
+  const controller = fileWatch = new AbortController(), client = api();
+  (async () => {
+    let wait = 1000;
+    try {
+      while (!controller.signal.aborted && waiting().length) {
+        await sleep(wait, controller.signal);
+        for (const file of waiting()) {
+          try { applyFile(file, await client.getFile(file.fileId, controller.signal)); }
+          catch (error) { if ([404, 410].includes(error.status)) { file.availability = 'unavailable'; file.downloadUrl = null; } else if (controller.signal.aborted) return; }
+        }
+        save(); if (activeConversation() === conversation) { renderFiles(); updateComposer(); }
+        wait = Math.min(wait * 2, 10000);
+      }
+    } catch {} finally { if (fileWatch === controller) fileWatch = null; }
+  })();
+}
+async function removeFile(conversation, entry) {
+  if (entry.fileId && entry.phase === 'attached') {
+    if (!confirm(`Gỡ "${entry.name}" khỏi cuộc trò chuyện này? File vẫn còn trong Library.`)) return;
+    try { await api().detach(conversation.sessionId, entry.fileId); }
+    catch (error) { toast(`Chưa gỡ được file: ${docError(error)}`); return; }
+  }
+  pendingFiles.delete(entry.localKey);
+  conversation.files = conversation.files.filter(f => f !== entry); save(); renderFiles(); updateComposer();
+}
+function fileStatus(file) {
+  if (file.phase === 'uploading') return ['busy', 'Đang tải lên…'];
+  if (file.phase === 'attaching') return ['busy', 'Đang gắn vào chat…'];
+  if (file.phase === 'upload-error' || file.phase === 'attach-error') return ['error', file.error || 'Lỗi'];
+  if (file.availability === 'pending') return ['busy', 'Đang chờ quét virus'];
+  if (file.availability === 'failed') return ['error', file.errorCode === 'FILE_REJECTED' ? 'Bị từ chối khi quét' : 'Quét lỗi, backend sẽ thử lại'];
+  if (file.availability === 'unavailable') return ['error', 'File không còn trong Library'];
+  const read = file.agentRead?.status;
+  if (read === 'ready') return caps?.agentRead?.enabled ? ['ok', file.selected ? 'Sẽ gửi kèm câu hỏi' : 'AI đọc được · bấm để chọn'] : ['warn', 'Đã xử lý · backend chưa bật hỏi đáp'];
+  if (read === 'pending' || read === 'processing') return ['busy', file.agentRead?.errorCode === 'DOCUMENT_DERIVED_QUOTA_EXCEEDED' ? 'Chờ dung lượng xử lý, hãy dọn Library' : 'AI đang đọc tài liệu…'];
+  if (read === 'failed') return ['error', `AI không đọc được${file.agentRead?.errorCode ? ` (${file.agentRead.errorCode})` : ''}`];
+  return ['warn', `Đã quét sạch · AI chưa đọc được${file.agentRead?.errorCode ? ` (${file.agentRead.errorCode})` : ''}`];
+}
+function renderFiles() {
+  const conversation = activeConversation(), files = conversation?.files || [], box = $('#file-chips');
+  box.replaceChildren(); box.hidden = !files.length;
+  $('#attach-button').hidden = !(caps?.upload?.enabled && caps?.attachments?.enabled);
+  for (const file of files) {
+    const [tone, label] = fileStatus(file), askable = file.phase === 'attached' && canAskAbout(file, caps);
+    const chip = el('div', `file-chip ${tone}${file.selected && askable ? ' selected' : ''}`);
+    const main = button('', () => {
+      if (!askable) { toast(label); return; }
+      file.selected = !file.selected; save(); renderFiles(); updateComposer();
+    }, 'file-chip-main', file.selected && askable ? 'check' : 'file');
+    main.setAttribute('aria-pressed', String(Boolean(file.selected && askable)));
+    main.title = `${file.name}\n${label}`;
+    const text = el('span', 'file-chip-text'); text.append(el('strong', '', file.name), el('small', '', label)); main.append(text);
+    chip.append(main);
+    if (file.phase === 'upload-error' && pendingFiles.has(file.localKey) || file.phase === 'attach-error') chip.append(button('Thử lại', () => uploadEntry(conversation, file), 'file-chip-retry'));
+    const path = libraryDownloadPath(file.downloadUrl);
+    if (path) { const download = button('', event => downloadArtifact(path, file.name, event.currentTarget), 'file-chip-icon', 'download'); download.title = 'Tải file gốc'; download.setAttribute('aria-label', `Tải ${file.name}`); chip.append(download); }
+    const remove = button('', () => removeFile(conversation, file), 'file-chip-icon', 'x');
+    remove.title = file.phase === 'attached' ? 'Gỡ khỏi cuộc trò chuyện' : 'Bỏ file này'; remove.setAttribute('aria-label', `${remove.title}: ${file.name}`);
+    if (file.phase === 'uploading' || file.phase === 'attaching') remove.disabled = true;
+    chip.append(remove); box.append(chip);
+  }
 }
 function updateChrome() {
   $('#backend-label').textContent = prefs.backend === 'dsh' ? 'VHT Backend DSH' : 'VHT Backend';
@@ -100,9 +286,10 @@ function renderHistory() {
 }
 function selectConversation(id) {
   if (sending) { toast('Đang gửi yêu cầu. Vui lòng đợi kết quả gửi.'); return; }
-  selection++; observer?.abort(); selectedId = id; save();
-  $('#sidebar').classList.remove('open'); renderHistory(); renderMessages(); updateComposer();
+  selection++; observer?.abort(); stopFileWatch(); selectedId = id; save();
+  $('#sidebar').classList.remove('open'); renderHistory(); renderMessages(); renderFiles(); updateComposer();
   if (latestState()) startObserver();
+  syncAttachments(activeConversation());
 }
 function newChat() { selectConversation(null); $('#prompt').value = ''; fitTextarea(); $('#prompt').focus(); }
 function markdown(text) {
@@ -206,6 +393,22 @@ function renderBlock(block) {
   if (node) notice(node, block.limitations);
   return node || null;
 }
+// Citations come only from the canonical response; never built from streamed text or model-written names/URLs.
+function renderCitations(citations) {
+  const node = createBlock('Nguồn trích dẫn', 'book'), list = el('ol', 'citation-list');
+  citations.slice(0, 20).forEach((citation, index) => {
+    const number = /^cite-(\d+)$/.exec(citation.id || '')?.[1] || String(index + 1);
+    const item = el('li', 'citation'), head = el('div', 'citation-head');
+    head.append(el('span', 'citation-marker', `[${number}]`), el('strong', '', citation.fileName || 'Tài liệu'), el('span', 'citation-location', citationLabel(citation.location)));
+    item.append(head);
+    if (typeof citation.quote === 'string' && citation.quote) item.append(el('blockquote', 'citation-quote', citation.quote));
+    const path = libraryDownloadPath(citation.downloadUrl);
+    if (path) item.append(button('Tải tài liệu gốc', event => downloadArtifact(path, citation.fileName, event.currentTarget), 'citation-download', 'download'));
+    else item.append(el('small', 'citation-unavailable', 'Tài liệu gốc không còn khả dụng'));
+    list.append(item);
+  });
+  node.append(list); return node;
+}
 function renderEvents(state) {
   const detail = el('details', 'event-viewer'); detail.open = openEventRuns.has(state.runId);
   detail.addEventListener('toggle', () => {
@@ -244,7 +447,15 @@ function renderMessages() {
   $('#messages').replaceChildren();
   for (const message of conversation?.messages || []) {
     const node = el('article', `message ${message.role}`);
-    if (message.role === 'user') { node.append(el('div', 'user-bubble', message.text)); $('#messages').append(node); continue; }
+    if (message.role === 'user') {
+      node.append(el('div', 'user-bubble', message.text));
+      if (Array.isArray(message.attachments) && message.attachments.length) {
+        const list = el('div', 'message-files');
+        for (const name of message.attachments) { const item = el('span', 'message-file'); item.append(icon('file'), document.createTextNode(name)); list.append(item); }
+        node.append(list);
+      }
+      $('#messages').append(node); continue;
+    }
     const state = message.state || initialRun(conversation.sessionId, '');
     const header = el('div', 'assistant-header'), avatar = el('span', 'assistant-avatar'); avatar.append(icon('sparkles'));
     header.append(avatar, document.createTextNode('VHT Agent'));
@@ -260,6 +471,7 @@ function renderMessages() {
     else if (isTerminal(state.status)) body.append(el('div', 'empty-answer', 'Run đã kết thúc và không có nội dung trả lời.'));
     else { const typing = el('div', 'typing'); typing.setAttribute('aria-label', 'Agent đang xử lý'); for (let i = 0; i < 3; i++) typing.append(el('span')); body.append(typing); }
     const presentation = el('div', 'presentation'); for (const block of state.blocks || []) { const view = renderBlock(block); if (view) presentation.append(view); } if (presentation.children.length) body.append(presentation);
+    if (state.citations?.length) body.append(renderCitations(state.citations));
     if (state.status === 'WaitingConfirmation' && state.runId === latestState()?.runId && !conversation.pending && !sending) {
       const actions = el('div', 'actions');
       for (const action of (state.actions || []).filter(a => allowedAction(a, state.runId))) {
@@ -299,7 +511,14 @@ function updateComposer() {
   $('#cancel-run').hidden = !run || isTerminal(run.status) || ['WaitingConfirmation', 'Uncertain'].includes(run.status);
   $('#cancel-run').disabled = Boolean(run?.cancellationRequestedAt) || sending;
   $('#composer-status').textContent = sending ? 'Đang gửi tin nhắn' : pending ? 'Chờ xác nhận lần gửi' : run ? statusLabels[run.status] || 'Đang xử lý' : 'Sẵn sàng trò chuyện';
-  $('#session-note').textContent = run?.status === 'WaitingConfirmation' ? 'Xem lại đề xuất và chọn hành động trước khi tiếp tục.' : run?.status === 'Uncertain' ? 'Backend chưa xác định kết quả. Chờ đối soát trước khi gửi thêm.' : '';
+  $('#attach-button').disabled = sending;
+  const files = (conversation?.files || []).filter(f => f.phase === 'attached');
+  const selected = files.filter(f => f.selected && canAskAbout(f, caps)).length;
+  // Upload success is not grounding: say plainly when the next prompt goes out text-only.
+  const documentNote = !files.length ? '' : caps?.agentRead?.enabled !== true
+    ? 'Backend chưa bật hỏi đáp tài liệu (agentRead.enabled=false): câu hỏi sẽ gửi chỉ có chữ, AI không đọc các file trên.'
+    : selected ? `Câu hỏi tiếp theo sẽ gửi kèm ${selected} tài liệu.` : 'Chọn tài liệu đã sẵn sàng (bấm vào chip) để AI trả lời dựa trên file.';
+  $('#session-note').textContent = run?.status === 'WaitingConfirmation' ? 'Xem lại đề xuất và chọn hành động trước khi tiếp tục.' : run?.status === 'Uncertain' ? 'Backend chưa xác định kết quả. Chờ đối soát trước khi gửi thêm.' : documentNote;
 }
 function fitTextarea() { $('#prompt').style.height = 'auto'; $('#prompt').style.height = Math.min($('#prompt').scrollHeight, 180) + 'px'; updateComposer(); }
 function startObserver(runId = latestState()?.runId, streamFirst = false) {
@@ -320,11 +539,7 @@ async function submitPending(conversation) {
   if (!message) return;
   sending = true; message.submitError = ''; updateComposer(); renderMessages();
   try {
-    if (!conversation.sessionId) {
-      const session = await client.createSession(conversation.title);
-      if (!session?.id) throw new Error('Backend không trả session ID.');
-      conversation.sessionId = session.id; save();
-    }
+    await ensureSession(conversation, client);
     const run = pending.path ? await client.request(pending.path, { method: 'POST', body: { text: pending.text, idempotencyKey: pending.key } }) : await client.submit(conversation.sessionId, pending);
     if (!run?.id || run.sessionId !== conversation.sessionId) throw new Error('Backend không trả accepted run DTO hợp lệ.');
     message.state = { ...initialRun(run.sessionId, run.id), status: statusName(run.status) };
@@ -335,7 +550,7 @@ async function submitPending(conversation) {
     }
     if (generation === selection) startObserver(run.id, true);
   } catch (error) {
-    message.submitError = error.status && error.status < 500 ? error.message : `${error.message || 'Không kết nối được backend.'} Thử lại sẽ giữ cùng khóa gửi để tránh tạo run trùng.`;
+    message.submitError = DOC_ERRORS[error.code] ? `${docError(error)}. Không có run nào được tạo.` : error.status && error.status < 500 ? error.message : `${error.message || 'Không kết nối được backend.'} Thử lại sẽ giữ cùng khóa gửi để tránh tạo run trùng.`;
     save();
   } finally { sending = false; renderHistory(); renderMessages(); updateComposer(); }
 }
@@ -345,20 +560,24 @@ async function sendPrompt(event) {
   if (prefs.mode === 'bearer' && !authToken) { openSettings(); return; }
   let conversation = activeConversation();
   if (!conversation) { conversation = { localId: randomId(), title: text.slice(0, 52), messages: [], createdAt: new Date().toISOString() }; conversations.unshift(conversation); selectedId = conversation.localId; }
+  // Each prompt names its own files; nothing is inherited from earlier turns.
+  const chosen = (conversation.files || []).filter(f => f.phase === 'attached' && f.selected && canAskAbout(f, caps));
+  const limit = caps?.attachments?.maxAttachmentsPerPrompt;
+  if (Number.isFinite(limit) && chosen.length > limit) { toast(`Mỗi câu hỏi tối đa ${limit} tài liệu. Bỏ chọn bớt file.`); return; }
   const assistantId = randomId();
-  conversation.messages.push({ role: 'user', text }, { role: 'assistant', localId: assistantId });
-  conversation.pending = { text, key: randomId(), assistantId };
+  conversation.messages.push({ role: 'user', text, attachments: chosen.map(f => f.name) }, { role: 'assistant', localId: assistantId });
+  conversation.pending = { text, key: randomId(), assistantId, attachmentFileIds: chosen.map(f => f.fileId) };
   $('#prompt').value = ''; fitTextarea(); save(); renderHistory(); renderMessages(); $('#chat-scroll').scrollTop = $('#chat-scroll').scrollHeight;
   await submitPending(conversation);
 }
 async function downloadArtifact(path, filename, control) {
-  if (!artifactPath(path)) return;
+  if (!artifactPath(path) && !libraryDownloadPath(path)) return;
   if (control) control.disabled = true;
   try {
     const response = await api().request(path, { raw: true });
     const blob = await response.blob(), url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = String(filename || 'report').replace(/[\\/:*?"<>|]/g, '_'); a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 30000); toast('Đã tải báo cáo.');
+    setTimeout(() => URL.revokeObjectURL(url), 30000); toast(libraryDownloadPath(path) ? 'Đã tải tài liệu.' : 'Đã tải báo cáo.');
   } catch (error) { toast(`Chưa tải được file: ${error.message}`); }
   finally { if (control) control.disabled = false; }
 }
@@ -430,6 +649,11 @@ $('#events-toggle').addEventListener('click', () => {
   if (openEventRuns.has(state.runId)) $('#messages .event-viewer:last-child')?.scrollIntoView({ block: 'nearest' });
 });
 $('#prompt').addEventListener('input', fitTextarea);
+$('#attach-button').addEventListener('click', () => $('#file-input').click());
+$('#file-input').addEventListener('change', event => { const files = [...event.target.files]; event.target.value = ''; addFiles(files); });
+$('#composer').addEventListener('dragover', event => { if (caps?.upload?.enabled && event.dataTransfer?.types.includes('Files')) { event.preventDefault(); $('#composer').classList.add('dragging'); } });
+$('#composer').addEventListener('dragleave', () => $('#composer').classList.remove('dragging'));
+$('#composer').addEventListener('drop', event => { $('#composer').classList.remove('dragging'); if (!event.dataTransfer?.files.length) return; event.preventDefault(); addFiles([...event.dataTransfer.files]); });
 $('#prompt').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!$('#send-button').disabled) $('#composer').requestSubmit(); } });
 document.addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); newChat(); } });
 $('.new-chat kbd').textContent = navigator.platform.includes('Mac') ? '⌘ K' : 'Ctrl K';
@@ -451,7 +675,7 @@ $('#cancel-run').addEventListener('click', async () => {
 $('#clear-history').addEventListener('click', () => {
   if (sending) { toast('Đợi gửi xong trước khi xóa lịch sử.'); return; }
   if (!confirm('Xóa lịch sử của kết nối và tài khoản hiện tại khỏi trình duyệt? Run trên backend vẫn tiếp tục; hành động này không hủy agent.')) return;
-  observer?.abort(); selection++; conversations = []; selectedId = null; save(); $('#settings-dialog').close(); renderHistory(); renderMessages(); updateComposer();
+  observer?.abort(); stopFileWatch(); selection++; conversations = []; selectedId = null; save(); $('#settings-dialog').close(); renderHistory(); renderMessages(); renderFiles(); updateComposer();
 });
 window.addEventListener('pagehide', () => { clearTimeout(storageTimer); save(); observer?.abort(); });
 try { const response = await fetch('/ui-config'); if (!response.ok) throw new Error(); config = await response.json(); await loadScope(); }
