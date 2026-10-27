@@ -120,3 +120,17 @@ systemctl --user restart vht-agent-ui.service
 ```
 
 Mở `http://<server-ip>:5173`. UI proxy tới backend nội bộ và sử dụng auth đang được backend cấu hình. UUID/history có fallback cho HTTP qua IP. Với deployment Internet, cấu hình reverse proxy HTTPS và cơ chế auth tương ứng.
+
+## True model-text streaming
+
+Paired DSH source now supports optional `textSource=model_stream` previews in existing `assistant.text` SSE.
+Enable `DshAcp:TextStreamingEnabled` on the updated Backend/Agent after required migrations; UI alone cannot
+recover upstream buffered tokens. UI shows actual received text with update count and browser-observed
+first-text delay since SSE connection. `committed_message` bursts are labeled generic SSE, not model streaming.
+Canonical `/response` still replaces previews. Documents/Config/structured text may remain held by Backend guards.
+
+## Hoạt động model/tool
+
+Mỗi lượt có mục **Hoạt động** dưới câu trả lời. Mở để xem model/tool đang chạy, đồng hồước tính, trạng thái và duration runtime khi kết thúc. Timeline nhận qua activityDetail/activitySnapshot trên SSE; khi mở run cũ hoặc kết thúc, UI dùng GET /api/chat/runs/{runId}/activity (cùng auth). Bấm **Đọc lại timeline** để refresh. Mở từng dòng để xem metadataJSON, không có prompt/reasoning/input-output. Reload không gửi lại prompt. Cùng tool gọi nhiều lần/song song vẫn là những dòng riêng theo spanId.
+
+Tổng thời gian lấy Backendwallclock, không cộng các span song song. Chưa có log/Backend cũ được ghi rõ; thiếuend không tự coi thành công. Đồng hồ đang chạy làước tính; mất kết nối thì trạng thái có thể cũ. UI giữ tối đa1000spans/run và báo giới hạn.

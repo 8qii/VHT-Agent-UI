@@ -37,7 +37,7 @@ export function createServer() {
       target.pathname = target.pathname.replace(/\/$/, '') + proxy[2];
       target.search = url.search;
       const headers = {};
-      for (const key of ['accept', 'content-type', 'authorization', 'x-demo-user', 'cookie', 'if-none-match']) {
+      for (const key of ['accept', 'content-type', 'authorization', 'x-demo-user', 'cookie', 'if-none-match', 'last-event-id']) {
         if (req.headers[key]) headers[key] = req.headers[key];
       }
       const transport = target.protocol === 'https:' ? https : http;

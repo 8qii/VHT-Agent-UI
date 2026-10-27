@@ -1,6 +1,6 @@
 import { marked } from './vendor/marked.js';
 import DOMPurify from './vendor/purify.js';
-import { ChatApi, initialRun, observeRun, isTerminal, statusName, allowedAction, artifactPath, randomId } from './core.js';
+import { ChatApi, initialRun, observeRun, isTerminal, statusName, allowedAction, artifactPath, randomId, applyActivitySnapshot, activityDuration, formatDuration } from './core.js';
 
 const $ = selector => document.querySelector(selector);
 const ICONS = {
@@ -48,6 +48,7 @@ const statusLabels = { Pending: 'Đang chờ', Running: 'Đang xử lý', Uncert
 let config, prefs, authToken = '', scope = '', conversations = [], selectedId, observer, selection = 0, sending = false, renderQueued = false, storageTimer, toastTimer, currentAction;
 const openEventRuns = new Set();
 const openEventRows = new Set();
+const openActivityRuns = new Set(), openActivityRows = new Set(), activityLoading = new Set(), activityAttempts = new Set();
 const connectionLabels = { connecting: 'Đang mở SSE', live: 'SSE trực tiếp', reconnecting: 'SSE đang kết nối lại', polling: 'Theo dõi qua GET', closed: 'SSE đã kết thúc', error: 'Lỗi kết nối' };
 try { prefs = JSON.parse(localStorage.getItem('vht-ui:settings')) || {}; } catch { prefs = {}; }
 prefs = { backend: 'goose', mode: 'demo', demoUser: '00000000-0000-0000-0000-000000000001', directUrl: '', ...prefs };
@@ -206,6 +207,75 @@ function renderBlock(block) {
   if (node) notice(node, block.limitations);
   return node || null;
 }
+async function loadActivity(runId) {
+  if (activityLoading.has(runId)) return;
+  const conversation = activeConversation(), generation = selection;
+  const message = conversation?.messages.find(m => m.state?.runId === runId);
+  if (!message) return;
+  activityLoading.add(runId); activityAttempts.add(`${scope}:${runId}`); message.state.activityError = ''; message.state.activityHydrated = true; scheduleRender();
+  try {
+    const snapshot = await api().getActivity(runId);
+    if (generation !== selection) return;
+    // A GET racing newer SSE must never overwrite a later span end with an older start.
+    if ((snapshot.lastSequence || 0) >= Math.max(message.state.activityWatermark || 0, ...((message.state.activitySpans || []).map(s => s.sequence))))
+      message.state = applyActivitySnapshot(message.state, snapshot);
+    persistSoon();
+  } catch (error) {
+    if (generation === selection) message.state.activityError = error.status === 404
+      ? 'Instance này chưa có API activity hoặc run không thuộc tài khoản hiện tại.' : 'Chưa đọc được timeline. Các event SSE đã nhận vẫn giữ nguyên.';
+  } finally { activityLoading.delete(runId); if (generation === selection) scheduleRender(); }
+}
+function renderActivity(state) {
+  const panel = el('details', 'activity-panel'); panel.open = openActivityRuns.has(state.runId);
+  panel.addEventListener('toggle', () => {
+    if (!panel.isConnected) return;
+    if (panel.open) { openActivityRuns.add(state.runId); if (!activityAttempts.has(`${scope}:${state.runId}`)) loadActivity(state.runId); }
+    else openActivityRuns.delete(state.runId);
+  });
+  const rows = state.activitySpans || [], active = rows.filter(s => s.state === 'started');
+  const running = !isTerminal(state.status) && !['WaitingConfirmation', 'Uncertain'].includes(state.status);
+  const summary = el('summary', 'activity-heading');
+  summary.append(icon('activity'), el('strong', '', 'Hoạt động'), el('span', 'activity-count', `${rows.filter(s => s.stage !== 'capture').length} bước${active.length && running ? ` · ${active.length} đang chạy` : ''}`));
+  panel.append(summary);
+  const content = el('div', 'activity-content');
+  const toolbar = el('div', 'activity-toolbar');
+  toolbar.append(el('code', '', state.runId), button(activityLoading.has(state.runId) ? 'Đang tải…' : 'Đọc lại timeline', () => loadActivity(state.runId), 'activity-refresh', 'refresh'));
+  content.append(toolbar);
+  if (state.activityError) content.append(el('p', 'error-note', state.activityError));
+  if (running && active.length && state.connection && state.connection !== 'live') content.append(el('p', 'activity-empty', 'Kết nối chưa trực tiếp; đây là trạng thái cuối đã nhận. Đồng hồ chỉ là ước tính.'));
+  if (!rows.length) content.append(el('p', 'activity-empty', activityLoading.has(state.runId) ? 'Đang đọc hoạt động đã lưu…' : 'Chưa ghi nhận bước model/tool. Run cũ hoặc instance chưa bật thu activity có thể không có timeline.'));
+  if (state.activityStatus === 'degraded' || state.activityHasMore) content.append(el('p', 'activity-empty', 'Timeline bị giới hạn hoặc thiếu dữ liệu; danh sách này chưa bao phủ toàn bộ lượt chạy.'));
+  for (const span of rows) {
+    if (span.stage === 'capture') { content.append(el('p', 'error-note', 'Đã chạm giới hạn thu log hoạt động.')); continue; }
+    const item = el('details', `activity-row ${span.state}`), key = `${state.runId}:${span.spanId}`;
+    item.open = openActivityRows.has(key);
+    item.addEventListener('toggle', () => { if (!item.isConnected) return; if (item.open) openActivityRows.add(key); else openActivityRows.delete(key); });
+    const title = el('summary'), info = el('div', 'activity-info');
+    info.append(el('strong', '', span.stage === 'model' ? 'Model' : span.toolName || 'Tool'));
+    const status = span.state === 'started' && !running ? 'Chưa có kết quả kết thúc' : ({started:'Đang chạy', completed:span.stage === 'tool' ? 'OK' : 'Hoàn tất', failed:'Lỗi', cancelled:'Đã hủy', interrupted:'Bị ngắt'})[span.state];
+    info.append(el('span', 'activity-state', status));
+    const timer = el('span', 'activity-duration', formatDuration(activityDuration(span, Date.now(), state.activityClockOffset || 0, running)));
+    if (span.state === 'started' && running && span.startedAt) { timer.dataset.startedAt = span.startedAt; timer.dataset.clockOffset = String(state.activityClockOffset || 0); }
+    timer.title = span.state === 'started' ? 'Ước tính từ thời điểm bắt đầu; cập nhật theo đồng hồ client.' : span.durationSource === 'runtime_monotonic' ? 'Thời gian runtime đo bằng đồng hồ monotonic.' : 'Không có số đo runtime đầy đủ.';
+    title.append(info, timer);item.append(title, el('pre', 'activity-json', JSON.stringify(span, null, 2)));content.append(item);
+  }
+  const footer = el('div', 'activity-footer');
+  const total = el('strong', 'activity-total', formatDuration(state.activityTotalMs));
+  if (running && Number.isFinite(state.activityTotalMs) && state.activityObservedAt) {
+    total.dataset.baseMs = String(state.activityTotalMs); total.dataset.observedAt = String(state.activityObservedAt);
+  }
+  footer.append(el('span', '', 'Tổng thời gian lượt chạy'), total);
+  content.append(footer, el('p', 'activity-help', 'Thời gian đang chạy là ước tính; khi hoàn tất dùng số đo runtime. Tổng lượt chạy không phải tổng các bước song song. Mở từng bước để xem metadata đã ghi nhận.'));
+  panel.append(content); return panel;
+}
+setInterval(() => {
+  if (document.hidden) return;
+  for (const timer of document.querySelectorAll('.activity-duration[data-started-at]'))
+    timer.textContent = '~' + formatDuration(Math.max(0, Date.now() + Number(timer.dataset.clockOffset || 0) - Date.parse(timer.dataset.startedAt)));
+  for (const timer of document.querySelectorAll('.activity-total[data-base-ms]'))
+    timer.textContent = '~' + formatDuration(Number(timer.dataset.baseMs) + Math.max(0, Date.now() - Number(timer.dataset.observedAt)));
+}, 250);
+
 function renderEvents(state) {
   const detail = el('details', 'event-viewer'); detail.open = openEventRuns.has(state.runId);
   detail.addEventListener('toggle', () => {
@@ -256,8 +326,17 @@ function renderMessages() {
       for (const activity of state.progress) { const row = el('div', `progress-row ${['started', 'completed', 'failed'].includes(activity.state) ? activity.state : ''}`); row.append(el('span', 'progress-dot'), el('span', '', activity.label)); progress.append(row); }
       body.append(progress);
     }
-    if (state.text) body.append(markdown(state.text));
-    else if (isTerminal(state.status)) body.append(el('div', 'empty-answer', 'Run đã kết thúc và không có nội dung trả lời.'));
+    if (state.text) {
+      const answer = el('div', `streaming-answer${state.provisional && !isTerminal(state.status) ? ' receiving' : ''}`);
+      answer.append(markdown(state.text));
+      if (state.provisional && !isTerminal(state.status)) {
+        const receipt = el('div', 'stream-receipt', `${state.textSource === 'model_stream' ? 'Đang nhận text từ model' : 'Đang nhận nội dung qua SSE'} · ${state.textUpdates || 1} lần cập nhật`);
+        if (state.firstTextDelayMs != null) receipt.append(document.createTextNode(` · text đầu sau ${(state.firstTextDelayMs / 1000).toFixed(2)} giây kết nối SSE`));
+        answer.append(receipt);
+      }
+      body.append(answer);
+    }
+    else if (isTerminal(state.status)) body.append(el('div', 'empty-answer', state.hydrated ? 'Run đã kết thúc và không có nội dung trả lời.' : 'Đang đọc câu trả lời đã lưu…'));
     else { const typing = el('div', 'typing'); typing.setAttribute('aria-label', 'Agent đang xử lý'); for (let i = 0; i < 3; i++) typing.append(el('span')); body.append(typing); }
     const presentation = el('div', 'presentation'); for (const block of state.blocks || []) { const view = renderBlock(block); if (view) presentation.append(view); } if (presentation.children.length) body.append(presentation);
     if (state.status === 'WaitingConfirmation' && state.runId === latestState()?.runId && !conversation.pending && !sending) {
@@ -279,7 +358,7 @@ function renderMessages() {
     if (state.provisional) footer.append(el('span', '', 'Nội dung đang được hoàn thiện'));
     if (state.connection === 'polling' && !isTerminal(state.status)) footer.append(el('span', '', 'Đang theo dõi trạng thái backend'));
     body.append(footer);
-    if (state.runId) body.append(renderEvents(state));
+    if (state.runId) body.append(renderActivity(state), renderEvents(state));
     node.append(body); $('#messages').append(node);
   }
   $('#events-toggle').setAttribute('aria-pressed', String(openEventRuns.has(latestState()?.runId)));

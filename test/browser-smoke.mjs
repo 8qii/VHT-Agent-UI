@@ -30,6 +30,12 @@ const fixture = http.createServer(async (req, res) => {
   if (path) {
     const run = runs.get(path[1]); if (!run) return json(res, {}, 404);
     if (path[2] === '') return json(res, { id: run.id, sessionId: run.sessionId, status: run.status, errorCode: null, cancellationRequestedAt: run.cancelledAt });
+    if (path[2].startsWith('/activity')) return json(res, {
+      runId:run.id,runStatus:run.status===6?'Completed':'Running',serverNow:new Date().toISOString(),lastSequence:5,
+      captureStatus:'observed',totalElapsedMs:1800,totalSpans:2,nextOffset:null,
+      spans:[{sequence:2,detail:{schemaVersion:1,spanId:'model1',stage:'model',state:run.status===6?'completed':'started',startedAt:new Date(Date.now()-1800).toISOString(),endedAt:new Date().toISOString(),durationMs:9390,durationSource:'runtime_monotonic',modelCallId:'m1'}},
+             {sequence:4,detail:{schemaVersion:1,spanId:'tool1',stage:'tool',state:'completed',startedAt:new Date(Date.now()-1000).toISOString(),endedAt:new Date().toISOString(),durationMs:24,durationSource:'runtime_monotonic',toolName:'inventory_ListNetworkInterfaces',toolCallId:'a'}}]
+    });
     if (path[2] === '/response') return json(res, {
       messageId: crypto.randomUUID(), sessionId: run.sessionId, runId: run.id,
       text: run.status === 3 ? 'Đề xuất cần được bạn xem lại.' : run.status === 7 ? 'Đã từ chối đề xuất.' : run.status === 9 ? 'Đã dừng.' : finishedText,
@@ -51,9 +57,10 @@ const fixture = http.createServer(async (req, res) => {
       run.streams.push(res);
       if (run.text === 'slow') return;
       if (run.text === 'streaming') {
-        res.write(sseEvent(run, 2, 'agent.progress', { activity: 'collectingEvidence', activityState: 'started', label: 'Collecting supporting information' }));
-        setTimeout(() => res.write(sseEvent(run, 3, 'assistant.text', { operation: 'replace', text: 'Thiết bị ', provisional: true })), 200);
-        setTimeout(() => res.write(sseEvent(run, 4, 'assistant.text', { operation: 'append', text: 'đang kết nối.', provisional: true })), 700);
+        res.write(sseEvent(run, 2, 'agent.progress', { activity: 'collectingEvidence', activityState: 'started', label: 'Collecting supporting information',
+          activityDetail:{schemaVersion:1,spanId:'model1',stage:'model',state:'started',startedAt:new Date().toISOString(),modelCallId:'m1',durationSource:'runtime_monotonic'} }));
+        setTimeout(() => res.write(sseEvent(run, 3, 'assistant.text', { operation: 'replace', text: 'Thiết bị ', provisional: true, textSource: 'model_stream' })), 200);
+        setTimeout(() => res.write(sseEvent(run, 4, 'assistant.text', { operation: 'append', text: 'đang kết nối.', provisional: true, textSource: 'model_stream' })), 700);
         setTimeout(() => { run.status = 6; res.end(sseEvent(run, 5, 'run.terminal', { status: 'Completed', terminal: true })); }, 1800);
         return;
       }
@@ -132,13 +139,24 @@ try {
   await check('Text renders incrementally before terminal; event viewer survives completion/reload and snapshot GET', async () => {
     await page.locator('#new-chat').click(); await send('streaming');
     await page.getByText('Thiết bị', { exact: true }).waitFor();
+    await page.locator('.activity-heading').last().click();
+    await page.locator('.activity-row.started').waitFor();
+    const clockBefore=await page.locator('.activity-row.started .activity-duration').last().innerText();
+    await page.waitForTimeout(300);
+    assert.notEqual(await page.locator('.activity-row.started .activity-duration').last().innerText(),clockBefore);
     assert.equal(await page.locator('.stream-badge.live').count(), 1);
+    assert.equal(await page.locator('.streaming-answer.receiving').count(), 1);
+    assert((await page.locator('.stream-receipt').innerText()).includes('Đang nhận text từ model'));
     await page.locator('#events-toggle').click();
     await page.getByText('Thiết bị đang kết nối.', { exact: true }).waitFor();
     assert((await page.locator('.message-status').last().innerText()).includes('Đang xử lý'));
     assert((await page.locator('.event-viewer[open]').innerText()).includes('assistant.text'));
     await page.screenshot({ path: new URL('streaming-events.png', output).pathname });
     await completed();
+    await page.locator('.activity-row.completed').first().waitFor();
+    assert((await page.locator('.activity-content').last().innerText()).includes('9.39 s'));
+    assert((await page.locator('.activity-content').last().innerText()).includes('24 ms'));
+    await page.screenshot({path:new URL('activity-completed.png',output).pathname});
     assert.equal(await page.locator('.event-row').count(), 5);
     assert((await page.locator('.event-viewer').innerText()).includes('run.terminal'));
     assert(!(await page.locator('.event-viewer').innerText()).includes('PRIVATE_EVENT_SECRET'));

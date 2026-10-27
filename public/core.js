@@ -12,7 +12,7 @@ export const initialRun = (sessionId, runId) => ({ sessionId, runId, status: 'Pe
 
 export function publicEvent(event, connection, receivedAt = new Date().toISOString()) {
   const entry = { receivedAt, connection, version: 2, sequence: event.sequence, kind: event.kind };
-  for (const key of ['sessionId', 'runId', 'status', 'operation', 'activity', 'activityState']) {
+  for (const key of ['sessionId', 'runId', 'status', 'operation', 'activity', 'activityState', 'textSource']) {
     if (typeof event[key] === 'string') entry[key] = event[key].slice(0, 128);
   }
   for (const key of ['terminal', 'provisional', 'resetDraft']) if (typeof event[key] === 'boolean') entry[key] = event[key];
@@ -21,6 +21,36 @@ export function publicEvent(event, connection, receivedAt = new Date().toISOStri
     entry.text = event.text.slice(0, 1000); entry.textCharacters = event.text.length; entry.textTruncated = event.text.length > 1000;
   }
   return entry; // fixed public projection; never persist unknown runtime/tool fields
+}
+
+export function safeActivity(detail, sequence = 0) {
+  if (!detail || typeof detail.spanId !== 'string' || !['model', 'tool', 'capture'].includes(detail.stage)
+      || !['started', 'completed', 'failed', 'cancelled', 'interrupted'].includes(detail.state)) return null;
+  const clean = { sequence: Number.isInteger(sequence) ? sequence : 0 };
+  for (const key of ['spanId', 'parentSpanId', 'stage', 'state', 'toolName', 'modelCallId', 'toolCallId', 'durationSource'])
+    if (typeof detail[key] === 'string') clean[key] = detail[key].slice(0, 160);
+  for (const key of ['startedAt', 'endedAt'])
+    if (typeof detail[key] === 'string' && Number.isFinite(Date.parse(detail[key]))) clean[key] = new Date(detail[key]).toISOString();
+  clean.durationMs = typeof detail.durationMs === 'number' && Number.isFinite(detail.durationMs) && detail.durationMs >= 0 ? detail.durationMs : null;
+  return clean;
+}
+export function applyActivitySnapshot(state, snapshot) {
+  if (!snapshot || snapshot.runId !== state.runId || !Array.isArray(snapshot.spans)) return state;
+  const spans = snapshot.spans.map(s => safeActivity(s.detail, s.sequence)).filter(Boolean).slice(0, 1000);
+  return { ...state, activitySpans: spans, activityStatus: snapshot.captureStatus,
+    activityTotal: snapshot.totalSpans, activityHasMore: snapshot.nextOffset != null,
+    activityWatermark: snapshot.lastSequence || 0, activityObservedAt: Date.now(), activityHydrated: true,
+    activityClockOffset: Number.isFinite(Date.parse(snapshot.serverNow)) ? Date.parse(snapshot.serverNow) - Date.now() : 0,
+    activityTotalMs: Number.isFinite(snapshot.totalElapsedMs) ? snapshot.totalElapsedMs : null };
+}
+export function activityDuration(span, now = Date.now(), offset = 0, running = true) {
+  if (span.state !== 'started') return span.durationMs;
+  if (!running || !Number.isFinite(Date.parse(span.startedAt))) return null;
+  return Math.max(0, now + offset - Date.parse(span.startedAt));
+}
+export function formatDuration(ms) {
+  if (ms == null || !Number.isFinite(ms)) return 'Chưa có số đo';
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`;
 }
 
 export function reduceRun(state, event) {
@@ -33,11 +63,25 @@ export function reduceRun(state, event) {
   if (event.kind === 'assistant.text') {
     if (!['append', 'replace'].includes(event.operation)) throw new Error('INVALID_OPERATION');
     next.text = event.operation === 'append' ? state.text + (event.text ?? '') : event.text ?? '';
+    next.textSource = ['model_stream', 'committed_message', 'canonical'].includes(event.textSource) ? event.textSource : 'unknown';
     next.provisional = event.provisional === true;
+    next.textUpdates = (state.textUpdates || 0) + 1;
+    if (event.text && state.firstTextDelayMs == null && state.streamStartedAt != null)
+      next.firstTextDelayMs = Math.max(0, Date.now() - state.streamStartedAt);
   }
   if (event.kind === 'agent.progress') {
     const activity = { activity: event.activity, state: event.activityState, label: event.label || 'Agent đang xử lý' };
     next.progress = [...state.progress.filter(p => p.activity !== activity.activity), activity].slice(-8);
+  }
+  if (event.kind === 'snapshot' && event.activitySnapshot) Object.assign(next, applyActivitySnapshot(next, event.activitySnapshot));
+  if (event.kind === 'agent.progress' && event.activityDetail && event.sequence > (next.activityWatermark || 0)) {
+    const span = safeActivity(event.activityDetail, event.sequence);
+    if (span) {
+      const rows = (next.activitySpans || []).filter(s => s.spanId !== span.spanId);
+      next.activityHasMore = rows.length >= 1000 || next.activityHasMore;
+      next.activitySpans = [...rows, span].sort((a,b) => (Date.parse(a.startedAt) - Date.parse(b.startedAt)) || a.sequence - b.sequence).slice(0, 1000);
+      next.activityStatus = span.stage === 'capture' ? 'degraded' : next.activityStatus === 'degraded' ? 'degraded' : 'observed';
+    }
   }
   next.terminal = event.terminal === true || isTerminal(next.status);
   next.events = [...(state.events || []), publicEvent(event, state.connectionIndex || 1)].slice(-200);
@@ -119,6 +163,7 @@ export class ChatApi {
   }
   createSession(title, signal) { return this.request('/api/chat/sessions', { method: 'POST', body: { title }, signal }); }
   submit(sessionId, pending, signal) { return this.request(`/api/chat/sessions/${encodeURIComponent(sessionId)}/prompts`, { method: 'POST', body: { text: pending.text, idempotencyKey: pending.key }, signal }); }
+  getActivity(runId, signal) { return this.request(`/api/chat/runs/${encodeURIComponent(runId)}/activity?limit=1000`, { signal }); }
   getRun(runId, signal) { return this.request(`/api/chat/runs/${encodeURIComponent(runId)}`, { signal }); }
   getResponse(runId, signal) { return this.request(`/api/chat/runs/${encodeURIComponent(runId)}/response`, { signal }); }
 }
@@ -148,7 +193,16 @@ export async function observeRun(api, initial, update, signal, { streamFirst = f
     if (hydrate || isTerminal(status) || status === 'WaitingConfirmation') {
       const response = await api.getResponse(state.runId, signal);
       // Never hydrate private fields or use a successful response to infer completion.
-      emit({ text: response.text ?? '', blocks: response.presentationBlocks || [], actions: response.actions || [], provisional: false, hydrated: true, hydrationError: false });
+      emit({ text: response.text ?? '', blocks: response.presentationBlocks || [], actions: response.actions || [], textSource: 'canonical', provisional: false, hydrated: true, hydrationError: false });
+      if (typeof api.getActivity === 'function') {
+        try {
+          const snapshot = await api.getActivity(state.runId, signal);
+          const newest = Math.max(state.activityWatermark || 0, ...(state.activitySpans || []).map(s => s.sequence));
+          if ((snapshot.lastSequence || 0) >= newest) emit(applyActivitySnapshot(state, snapshot));
+        } catch (error) {
+          if (!signal.aborted) emit({ activityError: error.status === 404 ? 'Backend chưa có timeline cho run này.' : 'Chưa đọc được timeline đã lưu.', activityHydrated: true });
+        }
+      }
       if (isTerminal(status)) emit({ connection: 'closed' });
     }
     return isTerminal(status);
@@ -158,7 +212,7 @@ export async function observeRun(api, initial, update, signal, { streamFirst = f
       if (!streamFirst && await reconcile(isTerminal(state.status))) return;
       streamFirst = false;
       if (polling) { emit({ connection: 'polling' }); await delay(3000, signal); continue; }
-      emit({ connection: 'connecting', sequence: 0, connectionIndex: (state.connectionIndex || 0) + 1, connectionError: '' });
+      emit({ connection: 'connecting', streamStartedAt: Date.now(), sequence: 0, connectionIndex: (state.connectionIndex || 0) + 1, connectionError: '' });
       const streamAbort = new AbortController();
       const streamSignal = AbortSignal.any([signal, streamAbort.signal]);
       let terminal = false, waiting = false;
