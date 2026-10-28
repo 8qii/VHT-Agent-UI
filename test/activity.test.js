@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { initialRun, reduceRun, safeActivity, applyActivitySnapshot, activityDuration, formatDuration } from '../public/core.js';
+import { initialRun, reduceRun, safeActivity, applyActivitySnapshot, activityDuration, formatDuration, activityPhase } from '../public/core.js';
 const start={spanId:'s1',stage:'model',state:'started',startedAt:'2026-10-27T10:00:00Z',modelCallId:'m1',durationMs:null,durationSource:'runtime_monotonic'};
 const event=(sequence,detail)=>({version:2,kind:'agent.progress',sessionId:'session',runId:'run',sequence,activityDetail:detail});
 test('realtime spans update by identity; same tool name and parallel calls never collapse',()=>{
@@ -32,4 +32,17 @@ test('live clocks are estimates; ended or disconnected runs never invent missing
  assert.equal(activityDuration({...start,state:'completed',durationMs:24}),24);
  assert.equal(formatDuration(9390),'9.39 s');assert.equal(formatDuration(24),'24 ms');
  assert.equal(formatDuration(null),'Chưa có số đo');
+});
+
+test('terminal activity readback stops stale running status; running snapshot cannot reopen a terminal run',()=>{
+ const state={...initialRun('session','run'),status:'Running'};
+ const done=applyActivitySnapshot(state,{runId:'run',spans:[],runStatus:'Completed',totalElapsedMs:1234});
+ assert.equal(done.status,'Completed');assert.equal(done.terminal,true);
+ assert.equal(applyActivitySnapshot(done,{runId:'run',spans:[],runStatus:'Running'}).status,'Completed');
+});
+test('phase labels explain grounding continuations without asserting hidden model intent',()=>{
+ const tool={stage:'tool',toolName:'mcp__grounding__submit_grounded_answer',state:'failed'}, model={stage:'model'};
+ assert.match(activityPhase([tool,model],1),/có thể sửa/);
+ assert.match(activityPhase([tool,model,tool,model],3),/chưa xác minh/);
+ assert.match(activityPhase([{...tool,state:'completed'},model],1),/sau kiểm chứng/);
 });

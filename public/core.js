@@ -38,6 +38,7 @@ export function applyActivitySnapshot(state, snapshot) {
   if (!snapshot || snapshot.runId !== state.runId || !Array.isArray(snapshot.spans)) return state;
   const spans = snapshot.spans.map(s => safeActivity(s.detail, s.sequence)).filter(Boolean).slice(0, 1000);
   return { ...state, activitySpans: spans, activityStatus: snapshot.captureStatus,
+    ...(snapshot.runStatus && isTerminal(snapshot.runStatus) ? {status: statusName(snapshot.runStatus), terminal: true} : {}),
     activityTotal: snapshot.totalSpans, activityHasMore: snapshot.nextOffset != null,
     activityWatermark: snapshot.lastSequence || 0, activityObservedAt: Date.now(), activityHydrated: true,
     activityClockOffset: Number.isFinite(Date.parse(snapshot.serverNow)) ? Date.parse(snapshot.serverNow) - Date.now() : 0,
@@ -193,7 +194,7 @@ export async function observeRun(api, initial, update, signal, { streamFirst = f
     if (hydrate || isTerminal(status) || status === 'WaitingConfirmation') {
       const response = await api.getResponse(state.runId, signal);
       // Never hydrate private fields or use a successful response to infer completion.
-      emit({ text: response.text ?? '', blocks: response.presentationBlocks || [], actions: response.actions || [], textSource: 'canonical', provisional: false, hydrated: true, hydrationError: false });
+      emit({ text: response.text ?? '', blocks: response.presentationBlocks || [], actions: response.actions || [], textSource: 'canonical', provisional: false, hydrated: true, hydrationError: false, groundingStatus: ['passed','failed','not_verified'].includes(response.groundingStatus) ? response.groundingStatus : null });
       if (typeof api.getActivity === 'function') {
         try {
           const snapshot = await api.getActivity(state.runId, signal);
@@ -253,4 +254,16 @@ export async function observeRun(api, initial, update, signal, { streamFirst = f
       await delay(Math.max(Math.min(1000 * 2 ** (attempts - 1), 10000), error.retryAfter || 0), signal);
     }
   }
+}
+
+export function activityPhase(rows, index) {
+  const span = rows[index], grounding = s => s?.stage === 'tool' && s.toolName?.endsWith('submit_grounded_answer');
+  if (grounding(span)) return span.state === 'failed' ? 'Kiểm chứng không thành công' : 'Kiểm chứng bằng chứng';
+  if (span.stage !== 'model') return '';
+  const previous = rows.slice(0,index).reverse().find(s => s.stage === 'tool');
+  if (grounding(previous)) {
+    const failures = rows.slice(0,index).filter(s => grounding(s) && s.state === 'failed').length;
+    return previous.state === 'failed' ? (failures > 1 ? 'Model xử lý sau lỗi kiểm chứng · chưa xác minh' : 'Model xử lý sau lỗi kiểm chứng · có thể sửa binding') : 'Model tạo câu trả lời sau kiểm chứng';
+  }
+  return 'Model chọn hành động hoặc tạo nội dung';
 }

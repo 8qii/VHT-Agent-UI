@@ -1,6 +1,6 @@
 import { marked } from './vendor/marked.js';
 import DOMPurify from './vendor/purify.js';
-import { ChatApi, initialRun, observeRun, isTerminal, statusName, allowedAction, artifactPath, randomId, applyActivitySnapshot, activityDuration, formatDuration } from './core.js';
+import { ChatApi, initialRun, observeRun, isTerminal, statusName, allowedAction, artifactPath, randomId, applyActivitySnapshot, activityDuration, formatDuration, activityPhase } from './core.js';
 
 const $ = selector => document.querySelector(selector);
 const ICONS = {
@@ -252,6 +252,8 @@ function renderActivity(state) {
     item.addEventListener('toggle', () => { if (!item.isConnected) return; if (item.open) openActivityRows.add(key); else openActivityRows.delete(key); });
     const title = el('summary'), info = el('div', 'activity-info');
     info.append(el('strong', '', span.stage === 'model' ? 'Model' : span.toolName || 'Tool'));
+    const phase = activityPhase(rows, rows.indexOf(span));
+    if (phase) info.append(el('span', 'activity-state', phase));
     const status = span.state === 'started' && !running ? 'Chưa có kết quả kết thúc' : ({started:'Đang chạy', completed:span.stage === 'tool' ? 'OK' : 'Hoàn tất', failed:'Lỗi', cancelled:'Đã hủy', interrupted:'Bị ngắt'})[span.state];
     info.append(el('span', 'activity-state', status));
     const timer = el('span', 'activity-duration', formatDuration(activityDuration(span, Date.now(), state.activityClockOffset || 0, running)));
@@ -330,7 +332,7 @@ function renderMessages() {
       const answer = el('div', `streaming-answer${state.provisional && !isTerminal(state.status) ? ' receiving' : ''}`);
       answer.append(markdown(state.text));
       if (state.provisional && !isTerminal(state.status)) {
-        const receipt = el('div', 'stream-receipt', `${state.textSource === 'model_stream' ? 'Đang nhận text từ model' : 'Đang nhận nội dung qua SSE'} · ${state.textUpdates || 1} lần cập nhật`);
+        const receipt = el('div', 'stream-receipt', `${state.textSource === 'model_stream' ? 'Đang nhận text từ model' : 'Đang nhận nội dung qua SSE'} · bản nháp, lượt chạy chưa kết thúc · ${state.textUpdates || 1} lần cập nhật`);
         if (state.firstTextDelayMs != null) receipt.append(document.createTextNode(` · text đầu sau ${(state.firstTextDelayMs / 1000).toFixed(2)} giây kết nối SSE`));
         answer.append(receipt);
       }
@@ -347,6 +349,7 @@ function renderMessages() {
       }
       body.append(actions);
     }
+    if (state.groundingStatus) body.append(el('div', state.groundingStatus === 'passed' ? 'activity-help' : 'error-note', ({passed:'Grounding: các claim đã gửi được chấp nhận; không xác nhận toàn bộ lời văn.',failed:'Grounding thất bại: nội dung chưa được kiểm chứng đầy đủ.',not_verified:'Chưa kiểm chứng đầy đủ các claim đã gửi.'})[state.groundingStatus]));
     if (state.errorCode || ['Failed', 'Interrupted', 'Uncertain'].includes(state.status)) body.append(el('div', 'error-note', state.errorCode ? `Backend: ${state.errorCode}` : state.status === 'Uncertain' ? 'Kết quả chưa xác định. UI đang theo dõi trạng thái; không gửi lại yêu cầu.' : 'Yêu cầu không hoàn thành. Bạn có thể gửi một tin nhắn mới khi run đã kết thúc.'));
     if (state.connectionError && !isTerminal(state.status) || state.hydrationError) {
       const error = el('div', 'error-note', state.hydrationError ? `Chưa lấy được câu trả lời chuẩn từ backend. ${state.connection === 'error' ? state.connectionError : 'Đang thử lại.'}` : state.connection === 'error' ? state.connectionError : 'Kết nối bị gián đoạn. Đang khôi phục cùng run.');
