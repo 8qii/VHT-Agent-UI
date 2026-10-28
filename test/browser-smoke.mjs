@@ -30,11 +30,24 @@ const fixture = http.createServer(async (req, res) => {
   if (path) {
     const run = runs.get(path[1]); if (!run) return json(res, {}, 404);
     if (path[2] === '') return json(res, { id: run.id, sessionId: run.sessionId, status: run.status, errorCode: null, cancellationRequestedAt: run.cancelledAt });
+    if (path[2].startsWith('/trace?')) {
+      const after=Number(new URL(url,'http://fixture').searchParams.get('afterSequence') || 0);
+      const entry=(sequence,kind,data,extra={})=>({sequence,kind,data,runtimeRequestId:'fixture-request',runtimeSessionId:'fixture-session',...extra});
+      const items=[entry(1,'model.request',{model:'fixture-gemma',messages:[{role:'user',content:'PRIVATE_TRACE_PROMPT <script>window.__traceUnsafe=true</script>\n'+Array.from({length:150},(_,i)=>'Prompt line '+i).join('\n')}]},{modelCallId:'m1'}),
+        entry(2,'assistant/message',{message:{content:[{type:'text',text:'Trace model output'}]}}),
+        entry(3,'tool/call',{callId:'a',name:'inventory_ListNetworkInterfaces',arguments:'{"deviceId":387}'}),
+        entry(4,'tool/result',{message:{toolCallId:'a',content:[{type:'text',text:'{"count":2,"items":[{"name":"eth1"},{"name":"eth2"}]}'}]}}),
+        entry(5,'tool/call',{callId:'b',name:'create_mcp',arguments:'{"kind":"inventory"}'}),
+        entry(6,'tool/result',{message:{toolCallId:'b',content:[{type:'text',text:'started inventory; callable tools ready'}]}})];
+      return json(res,{runId:run.id,items:items.filter(e=>e.sequence>after),lastSequence:6,nextAfterSequence:null,captureStatus:'recorded'});
+    }
     if (path[2].startsWith('/activity')) return json(res, {
       runId:run.id,runStatus:run.status===6?'Completed':'Running',serverNow:new Date().toISOString(),lastSequence:5,
-      captureStatus:'observed',totalElapsedMs:1800,totalSpans:2,nextOffset:null,
+      captureStatus:'observed',totalElapsedMs:run.status===6?103790:1800,totalSpans:3,nextOffset:null,
+      ...(run.status===6?{agentElapsedMs:28700,agentStopped:true,reviewWaitMs:13800,operations:[{operationId:'fixture-op',kind:'Accept',status:'Succeeded',elapsedMs:61300}]}:{}),
       spans:[{sequence:2,detail:{schemaVersion:1,spanId:'model1',stage:'model',state:run.status===6?'completed':'started',startedAt:new Date(Date.now()-1800).toISOString(),endedAt:new Date().toISOString(),durationMs:9390,durationSource:'runtime_monotonic',modelCallId:'m1'}},
-             {sequence:4,detail:{schemaVersion:1,spanId:'tool1',stage:'tool',state:'completed',startedAt:new Date(Date.now()-1000).toISOString(),endedAt:new Date().toISOString(),durationMs:24,durationSource:'runtime_monotonic',toolName:'inventory_ListNetworkInterfaces',toolCallId:'a'}}]
+             {sequence:4,detail:{schemaVersion:1,spanId:'tool1',stage:'tool',state:'completed',startedAt:new Date(Date.now()-1000).toISOString(),endedAt:new Date().toISOString(),durationMs:24,durationSource:'runtime_monotonic',toolName:'inventory_ListNetworkInterfaces',toolCallId:'a'}},
+             {sequence:5,detail:{schemaVersion:1,spanId:'tool2',stage:'tool',state:'completed',startedAt:new Date(Date.now()-500).toISOString(),durationMs:16,durationSource:'runtime_monotonic',toolName:'create_mcp',toolCallId:'b'}}]
     });
     if (path[2] === '/response') return json(res, {
       messageId: crypto.randomUUID(), sessionId: run.sessionId, runId: run.id,
@@ -156,6 +169,24 @@ try {
     await page.locator('.activity-row.completed').first().waitFor();
     assert((await page.locator('.activity-content').last().innerText()).includes('9.39 s'));
     assert((await page.locator('.activity-content').last().innerText()).includes('24 ms'));
+    const timeline=await page.locator('.activity-content').last().innerText();
+    assert(timeline.includes('Thời gian Agent chuẩn bị / trả lời'));
+    assert(timeline.includes('28.70 s'));assert(timeline.includes('Chờ người dùng Accept: 13.80 s'));
+    assert(timeline.includes('Accept · Succeeded: 1m 1.3s') || timeline.includes('Accept · Succeeded: 61.30 s'));
+    const total=await page.locator('.activity-total').last().innerText();
+    await page.waitForTimeout(300);assert.equal(await page.locator('.activity-total').last().innerText(),total);
+    await page.getByText('create_mcp · inventory',{exact:true}).waitFor();
+    await page.locator('.activity-row').filter({has:page.getByText('Model · fixture-gemma',{exact:true})}).locator(':scope > summary').click();
+    const promptBox=page.locator('pre[aria-label="Prompt / messages gửi LLM"]').last();
+    assert((await promptBox.innerText()).includes('PRIVATE_TRACE_PROMPT'));
+    await promptBox.evaluate(node=>{node.scrollTop=150;});
+    assert(await promptBox.evaluate(node=>node.scrollHeight>node.clientHeight && node.scrollTop>0));
+    assert.equal(await page.evaluate(()=>window.__traceUnsafe),undefined);
+    await page.locator('.activity-row').filter({has:page.getByText('inventory_ListNetworkInterfaces',{exact:true})}).locator(':scope > summary').click();
+    assert((await page.locator('pre[aria-label="Tham số gọi tool"]').first().innerText()).includes('387'));
+    assert((await page.locator('pre[aria-label="Kết quả tool trả về"]').first().innerText()).includes('eth1'));
+    await page.waitForTimeout(400);
+    assert(!(await page.evaluate(()=>JSON.stringify(localStorage))).includes('PRIVATE_TRACE_PROMPT'));
     await page.screenshot({path:new URL('activity-completed.png',output).pathname});
     assert.equal(await page.locator('.event-row').count(), 5);
     assert((await page.locator('.event-viewer').innerText()).includes('run.terminal'));

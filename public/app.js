@@ -1,3 +1,4 @@
+import { mergeTracePage, traceStep } from './trace-view.js';
 import { marked } from './vendor/marked.js';
 import DOMPurify from './vendor/purify.js';
 import { ChatApi, initialRun, observeRun, isTerminal, statusName, allowedAction, artifactPath, randomId, applyActivitySnapshot, activityDuration, formatDuration, activityPhase } from './core.js';
@@ -49,6 +50,8 @@ let config, prefs, authToken = '', scope = '', conversations = [], selectedId, o
 const openEventRuns = new Set();
 const openEventRows = new Set();
 const openActivityRuns = new Set(), openActivityRows = new Set(), activityLoading = new Set(), activityAttempts = new Set();
+const privateTraces = new Map(), traceScroll = new Map();
+const traceKey = runId => `${scope}:${runId}`;
 const connectionLabels = { connecting: 'Đang mở SSE', live: 'SSE trực tiếp', reconnecting: 'SSE đang kết nối lại', polling: 'Theo dõi qua GET', closed: 'SSE đã kết thúc', error: 'Lỗi kết nối' };
 try { prefs = JSON.parse(localStorage.getItem('vht-ui:settings')) || {}; } catch { prefs = {}; }
 prefs = { backend: 'goose', mode: 'demo', demoUser: '00000000-0000-0000-0000-000000000001', directUrl: '', ...prefs };
@@ -67,6 +70,7 @@ function save() {
 function persistSoon() { clearTimeout(storageTimer); storageTimer = setTimeout(save, 300); }
 async function loadScope() {
   selection++; observer?.abort(); clearTimeout(storageTimer); sending = false;
+  privateTraces.clear(); traceScroll.clear();
   const identity = prefs.mode === 'bearer' ? authToken : prefs.mode === 'demo' ? prefs.demoUser : 'cookie';
   const input = new TextEncoder().encode([prefs.backend, prefs.directUrl || config.targets[prefs.backend], prefs.mode, identity].join('|'));
   const bytes = crypto.subtle ? await crypto.subtle.digest('SHA-256', input) : globalThis.sha256.arrayBuffer(input);
@@ -222,14 +226,55 @@ async function loadActivity(runId) {
     persistSoon();
   } catch (error) {
     if (generation === selection) message.state.activityError = error.status === 404
-      ? 'Instance này chưa có API activity hoặc run không thuộc tài khoản hiện tại.' : 'Chưa đọc được timeline. Các event SSE đã nhận vẫn giữ nguyên.';
+      ? 'Không tìm thấy activity trên Backend/tài khoản đang chọn. Các bước SSE đã nhận vẫn hiển thị.' : 'Chưa đọc được timeline. Các event SSE đã nhận vẫn giữ nguyên.';
   } finally { activityLoading.delete(runId); if (generation === selection) scheduleRender(); }
 }
+async function loadTrace(runId) {
+  const key = traceKey(runId), generation = selection, client = api();
+  let cached = privateTraces.get(key) || { items: [], cursor: 0, bytes: 0 };
+  if (cached.loading || cached.limited) return;
+  cached = { ...cached, loading: true, error: '' }; privateTraces.set(key, cached);
+  while (privateTraces.size > 3) privateTraces.delete(privateTraces.keys().next().value);
+  scheduleRender();
+  try {
+    // Two pages per refresh bounds transfer; next cursor is retained for realtime/explicit refresh.
+    for (let page = 0; page < 2; page++) {
+      const result = await client.getTrace(runId, cached.cursor);
+      if (generation !== selection || key !== traceKey(runId)) return;
+      cached = { ...mergeTracePage(cached, result), loading: true };
+      privateTraces.set(key, cached);
+      if (!cached.hasMore || cached.limited) break;
+    }
+  } catch (error) {
+    if (generation === selection) { cached.error = error.status === 404
+      ? 'Không tìm thấy trace trên Backend/tài khoản đang chọn.'
+      : error.status === 401 || error.status === 403 ? 'Không có quyền đọc trace bằng phiên đăng nhập hiện tại.' : 'Chưa đọc được chi tiết trace; có thể nhấn đọc lại.'; }
+  } finally {
+    if (privateTraces.get(key) === cached) { cached.loading = false; if (generation === selection) scheduleRender(); }
+  }
+}
+function traceSection(runId, spanId, heading, text) {
+  const box = el('section', 'trace-section'); box.append(el('h4', '', heading));
+  const pre = el('pre', 'activity-json trace-content', text), key = `${scope}:${runId}:${spanId}:${heading}`;
+  pre.tabIndex = 0; pre.setAttribute('aria-label', heading); pre.scrollTop = traceScroll.get(key) || 0;
+  pre.addEventListener('scroll', () => { traceScroll.set(key, pre.scrollTop); });
+  // Restore after insertion, since detached elements have no scroll range yet.
+  requestAnimationFrame(() => { if (pre.isConnected) pre.scrollTop = traceScroll.get(key) || 0; });
+  box.append(pre); return box;
+}
+setInterval(() => {
+  const conversation = activeConversation();
+  if (document.hidden || !conversation) return;
+  for (const message of conversation.messages) {
+    const state = message.state;
+    if (state && openActivityRuns.has(state.runId) && !isTerminal(state.status) && !['WaitingConfirmation','Uncertain'].includes(state.status)) loadTrace(state.runId);
+  }
+}, 3000);
 function renderActivity(state) {
   const panel = el('details', 'activity-panel'); panel.open = openActivityRuns.has(state.runId);
   panel.addEventListener('toggle', () => {
     if (!panel.isConnected) return;
-    if (panel.open) { openActivityRuns.add(state.runId); if (!activityAttempts.has(`${scope}:${state.runId}`)) loadActivity(state.runId); }
+    if (panel.open) { openActivityRuns.add(state.runId); if (!activityAttempts.has(`${scope}:${state.runId}`)) loadActivity(state.runId); if (!privateTraces.has(traceKey(state.runId))) loadTrace(state.runId); }
     else openActivityRuns.delete(state.runId);
   });
   const rows = state.activitySpans || [], active = rows.filter(s => s.state === 'started');
@@ -240,7 +285,12 @@ function renderActivity(state) {
   const content = el('div', 'activity-content');
   const toolbar = el('div', 'activity-toolbar');
   toolbar.append(el('code', '', state.runId), button(activityLoading.has(state.runId) ? 'Đang tải…' : 'Đọc lại timeline', () => loadActivity(state.runId), 'activity-refresh', 'refresh'));
-  content.append(toolbar);
+  const trace = privateTraces.get(traceKey(state.runId));
+  toolbar.append(button(trace?.loading ? 'Đang đọc chi tiết…' : trace?.hasMore ? 'Đọc tiếp chi tiết' : 'Đọc lại chi tiết', () => loadTrace(state.runId), 'activity-refresh'));
+  content.append(toolbar, el('p', 'activity-help', `Backend: ${prefs.backend} · ${baseUrl()}. Chi tiết lấy từ trace đã che bí mật, chỉ tài khoản sở hữu run đọc được; không lưu prompt/kết quả vào lịch sử trình duyệt.`));
+  if (trace?.error) content.append(el('p', 'error-note', trace.error));
+  if (trace?.limited || trace?.truncated || trace?.hasMore) content.append(el('p', 'activity-empty', 'Chi tiết chưa đầy đủ hoặc đã giới hạn; dùng “Đọc tiếp chi tiết” khi còn trang.'));
+  if (trace && !trace.items.length && !trace.loading && !trace.error) content.append(el('p', 'activity-empty', `Chưa có nội dung trace. Trạng thái thu: ${trace.captureStatus || 'chưa rõ'}.`));
   if (state.activityError) content.append(el('p', 'error-note', state.activityError));
   if (running && active.length && state.connection && state.connection !== 'live') content.append(el('p', 'activity-empty', 'Kết nối chưa trực tiếp; đây là trạng thái cuối đã nhận. Đồng hồ chỉ là ước tính.'));
   if (!rows.length) content.append(el('p', 'activity-empty', activityLoading.has(state.runId) ? 'Đang đọc hoạt động đã lưu…' : 'Chưa ghi nhận bước model/tool. Run cũ hoặc instance chưa bật thu activity có thể không có timeline.'));
@@ -250,8 +300,9 @@ function renderActivity(state) {
     const item = el('details', `activity-row ${span.state}`), key = `${state.runId}:${span.spanId}`;
     item.open = openActivityRows.has(key);
     item.addEventListener('toggle', () => { if (!item.isConnected) return; if (item.open) openActivityRows.add(key); else openActivityRows.delete(key); });
+    const detail = traceStep(trace?.items, span);
     const title = el('summary'), info = el('div', 'activity-info');
-    info.append(el('strong', '', span.stage === 'model' ? 'Model' : span.toolName || 'Tool'));
+    info.append(el('strong', '', detail.title));
     const phase = activityPhase(rows, rows.indexOf(span));
     if (phase) info.append(el('span', 'activity-state', phase));
     const status = span.state === 'started' && !running ? 'Chưa có kết quả kết thúc' : ({started:'Đang chạy', completed:span.stage === 'tool' ? 'OK' : 'Hoàn tất', failed:'Lỗi', cancelled:'Đã hủy', interrupted:'Bị ngắt'})[span.state];
@@ -259,14 +310,23 @@ function renderActivity(state) {
     const timer = el('span', 'activity-duration', formatDuration(activityDuration(span, Date.now(), state.activityClockOffset || 0, running)));
     if (span.state === 'started' && running && span.startedAt) { timer.dataset.startedAt = span.startedAt; timer.dataset.clockOffset = String(state.activityClockOffset || 0); }
     timer.title = span.state === 'started' ? 'Ước tính từ thời điểm bắt đầu; cập nhật theo đồng hồ client.' : span.durationSource === 'runtime_monotonic' ? 'Thời gian runtime đo bằng đồng hồ monotonic.' : 'Không có số đo runtime đầy đủ.';
-    title.append(info, timer);item.append(title, el('pre', 'activity-json', JSON.stringify(span, null, 2)));content.append(item);
+    title.append(info, timer); item.append(title);
+    if (detail.description) item.append(el('p', 'activity-help', detail.description));
+    if (detail.failed) item.append(el('p', 'error-note', 'Tool trả về lỗi (theo trace).'));
+    if (detail.missing) item.append(el('p', 'activity-empty', detail.missing));
+    for (const [heading, text] of detail.sections || []) item.append(traceSection(state.runId, span.spanId, heading, text));
+    if (detail.truncated) item.append(el('p', 'activity-empty', 'Bản ghi nguồn đã được giới hạn nội dung.'));
+    const metadata = el('details', 'trace-metadata'); metadata.append(el('summary', '', 'Metadata thời gian / định danh'), el('pre', 'activity-json', JSON.stringify(span, null, 2))); item.append(metadata);content.append(item);
   }
   const footer = el('div', 'activity-footer');
-  const total = el('strong', 'activity-total', formatDuration(state.activityTotalMs));
-  if (running && Number.isFinite(state.activityTotalMs) && state.activityObservedAt) {
-    total.dataset.baseMs = String(state.activityTotalMs); total.dataset.observedAt = String(state.activityObservedAt);
+  const separated = Number.isFinite(state.activityAgentMs);
+  const total = el('strong', 'activity-total', formatDuration(separated ? state.activityAgentMs : state.activityTotalMs));
+  if (running && !state.activityAgentStopped && Number.isFinite(state.activityTotalMs) && state.activityObservedAt) {
+    total.dataset.baseMs = String(separated ? state.activityAgentMs : state.activityTotalMs); total.dataset.observedAt = String(state.activityObservedAt);
   }
-  footer.append(el('span', '', 'Tổng thời gian lượt chạy'), total);
+  footer.append(el('span', '', separated ? 'Thời gian Agent chuẩn bị / trả lời' : 'Tổng thời gian lượt chạy'), total);
+  if (Number.isFinite(state.activityReviewWaitMs)) content.append(el('p', 'activity-help', `Chờ người dùng Accept: ${formatDuration(state.activityReviewWaitMs)}`));
+  for (const op of state.activityOperations || []) content.append(el('p', 'activity-help', `${op.kind} · ${op.status}: ${formatDuration(op.elapsedMs)} (gồm chờ worker và xử lý)`));
   content.append(footer, el('p', 'activity-help', 'Thời gian đang chạy là ước tính; khi hoàn tất dùng số đo runtime. Tổng lượt chạy không phải tổng các bước song song. Mở từng bước để xem metadata đã ghi nhận.'));
   panel.append(content); return panel;
 }
@@ -392,7 +452,9 @@ function startObserver(runId = latestState()?.runId, streamFirst = false) {
   const initial = { ...message.state, connectionError: '', hydrationError: false };
   observeRun(client, initial, state => {
     if (generation !== selection || signal.aborted) return;
+    const reconciled = state.hydrated && !message.state.hydrated;
     message.state = state; persistSoon(); scheduleRender();
+    if (reconciled) { loadActivity(state.runId); if (openActivityRuns.has(state.runId)) loadTrace(state.runId); }
   }, signal, { streamFirst }).catch(error => { if (!signal.aborted && generation === selection) { message.state.connectionError = error.message; message.state.connection = 'error'; scheduleRender(); } });
 }
 async function submitPending(conversation) {

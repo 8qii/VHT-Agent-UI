@@ -42,7 +42,11 @@ export function applyActivitySnapshot(state, snapshot) {
     activityTotal: snapshot.totalSpans, activityHasMore: snapshot.nextOffset != null,
     activityWatermark: snapshot.lastSequence || 0, activityObservedAt: Date.now(), activityHydrated: true,
     activityClockOffset: Number.isFinite(Date.parse(snapshot.serverNow)) ? Date.parse(snapshot.serverNow) - Date.now() : 0,
-    activityTotalMs: Number.isFinite(snapshot.totalElapsedMs) ? snapshot.totalElapsedMs : null };
+    activityTotalMs: Number.isFinite(snapshot.totalElapsedMs) ? snapshot.totalElapsedMs : null,
+    activityAgentMs: Number.isFinite(snapshot.agentElapsedMs) ? snapshot.agentElapsedMs : null,
+    activityAgentStopped: snapshot.agentStopped === true,
+    activityReviewWaitMs: Number.isFinite(snapshot.reviewWaitMs) ? snapshot.reviewWaitMs : null,
+    activityOperations: Array.isArray(snapshot.operations) ? snapshot.operations : [] };
 }
 export function activityDuration(span, now = Date.now(), offset = 0, running = true) {
   if (span.state !== 'started') return span.durationMs;
@@ -164,6 +168,7 @@ export class ChatApi {
   }
   createSession(title, signal) { return this.request('/api/chat/sessions', { method: 'POST', body: { title }, signal }); }
   submit(sessionId, pending, signal) { return this.request(`/api/chat/sessions/${encodeURIComponent(sessionId)}/prompts`, { method: 'POST', body: { text: pending.text, idempotencyKey: pending.key }, signal }); }
+  getTrace(runId, after = 0, signal) { return this.request(`/api/chat/runs/${encodeURIComponent(runId)}/trace?limit=100&afterSequence=${encodeURIComponent(after)}`, { signal }); }
   getActivity(runId, signal) { return this.request(`/api/chat/runs/${encodeURIComponent(runId)}/activity?limit=1000`, { signal }); }
   getRun(runId, signal) { return this.request(`/api/chat/runs/${encodeURIComponent(runId)}`, { signal }); }
   getResponse(runId, signal) { return this.request(`/api/chat/runs/${encodeURIComponent(runId)}/response`, { signal }); }

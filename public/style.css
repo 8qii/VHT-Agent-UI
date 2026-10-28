@@ -34,3 +34,5 @@ dialog{border:1px solid #e5ded4;border-radius:15px;background:#fcfbf8;color:#393
 .activity-footer{display:flex;justify-content:space-between;border-top:1px solid #e7ebe7;padding-top:14px;margin-top:8px;color:#68786e}.activity-footer strong{font-variant-numeric:tabular-nums}
 .activity-empty,.activity-help{font-size:10px;line-height:1.7;color:#8b978e;margin:10px 0}
 @media(max-width:760px){.activity-heading{padding:11px 10px}.activity-content{padding:0 10px 10px}.activity-info strong{font-size:10px}.activity-duration{font-size:10px}.activity-count{font-size:9px}.activity-toolbar code{max-width:100%;font-size:8px}}
+
+.trace-section h4{font-size:11px;font-weight:600;margin:16px 0 6px;color:#424c47}.trace-content{max-height:300px;overflow:auto;overscroll-behavior:contain;user-select:text;font-size:11px}.trace-content:focus{outline:2px solid #8ab7a7}.trace-metadata{font-size:10px;color:#6b7972;margin-top:12px}.trace-metadata>summary{cursor:pointer}.activity-toolbar{flex-wrap:wrap}

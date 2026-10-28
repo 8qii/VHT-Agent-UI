@@ -46,3 +46,12 @@ test('phase labels explain grounding continuations without asserting hidden mode
  assert.match(activityPhase([tool,model,tool,model],3),/chưa xác minh/);
  assert.match(activityPhase([{...tool,state:'completed'},model],1),/sau kiểm chứng/);
 });
+
+test('Agent duration stays separate from review wait and Accept duration',()=>{
+ const s=applyActivitySnapshot(initialRun('s','r'),{runId:'r',spans:[],totalElapsedMs:103790,
+  agentElapsedMs:28700,agentStopped:true,reviewWaitMs:13800,
+  operations:[{operationId:'op',kind:'Accept',status:'Succeeded',elapsedMs:61300}]});
+ assert.equal(s.activityAgentMs,28700);assert.equal(s.activityAgentStopped,true);
+ assert.equal(s.activityReviewWaitMs,13800);assert.equal(s.activityOperations[0].elapsedMs,61300);
+ assert.equal(s.activityTotalMs,103790);
+});
