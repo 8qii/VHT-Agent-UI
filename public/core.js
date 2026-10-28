@@ -194,7 +194,7 @@ export async function observeRun(api, initial, update, signal, { streamFirst = f
     if (hydrate || isTerminal(status) || status === 'WaitingConfirmation') {
       const response = await api.getResponse(state.runId, signal);
       // Never hydrate private fields or use a successful response to infer completion.
-      emit({ text: response.text ?? '', blocks: response.presentationBlocks || [], actions: response.actions || [], textSource: 'canonical', provisional: false, hydrated: true, hydrationError: false, groundingStatus: ['passed','failed','not_verified'].includes(response.groundingStatus) ? response.groundingStatus : null });
+      emit({ text: response.text ?? '', blocks: response.presentationBlocks || [], actions: response.actions || [], textSource: 'canonical', provisional: false, hydrated: true, hydrationError: false, groundingStatus: ['passed','failed','not_verified','disabled'].includes(response.groundingStatus) ? response.groundingStatus : null });
       if (typeof api.getActivity === 'function') {
         try {
           const snapshot = await api.getActivity(state.runId, signal);

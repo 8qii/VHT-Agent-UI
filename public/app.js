@@ -349,7 +349,7 @@ function renderMessages() {
       }
       body.append(actions);
     }
-    if (state.groundingStatus) body.append(el('div', state.groundingStatus === 'passed' ? 'activity-help' : 'error-note', ({passed:'Grounding: các claim đã gửi được chấp nhận; không xác nhận toàn bộ lời văn.',failed:'Grounding thất bại: nội dung chưa được kiểm chứng đầy đủ.',not_verified:'Chưa kiểm chứng đầy đủ các claim đã gửi.'})[state.groundingStatus]));
+    if (state.groundingStatus) body.append(el('div', state.groundingStatus === 'passed' ? 'activity-help' : 'error-note', ({disabled:'Chế độ thử nghiệm: đã tắt kiểm chứng grounding tự động cho Query.',passed:'Grounding: các claim đã gửi được chấp nhận; không xác nhận toàn bộ lời văn.',failed:'Grounding thất bại: nội dung chưa được kiểm chứng đầy đủ.',not_verified:'Chưa kiểm chứng đầy đủ các claim đã gửi.'})[state.groundingStatus]));
     if (state.errorCode || ['Failed', 'Interrupted', 'Uncertain'].includes(state.status)) body.append(el('div', 'error-note', state.errorCode ? `Backend: ${state.errorCode}` : state.status === 'Uncertain' ? 'Kết quả chưa xác định. UI đang theo dõi trạng thái; không gửi lại yêu cầu.' : 'Yêu cầu không hoàn thành. Bạn có thể gửi một tin nhắn mới khi run đã kết thúc.'));
     if (state.connectionError && !isTerminal(state.status) || state.hydrationError) {
       const error = el('div', 'error-note', state.hydrationError ? `Chưa lấy được câu trả lời chuẩn từ backend. ${state.connection === 'error' ? state.connectionError : 'Đang thử lại.'}` : state.connection === 'error' ? state.connectionError : 'Kết nối bị gián đoạn. Đang khôi phục cùng run.');
