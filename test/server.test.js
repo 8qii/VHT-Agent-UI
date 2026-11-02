@@ -58,3 +58,19 @@ test('Library proxy forwards upload idempotency and conditional headers without 
   assert.equal((await fetch(base+'/backend/native-real/internal/documents')).status,404);
  }finally{targets['native-real']=old;for(const s of[ui,backend]){s.closeAllConnections();await new Promise(r=>s.close(r));}}
 });
+
+
+test('comparison-only config keeps legacy primary routes available to existing tabs', async () => {
+ const previous=process.env.VHT_COMPARE_ONLY;process.env.VHT_COMPARE_ONLY='true';
+ const upstream=http.createServer((req,res)=>{res.writeHead(200,{'Content-Type':'application/json'});res.end('{"status":"ready"}');});
+ await new Promise(r=>upstream.listen(0,'127.0.0.1',r));const old=targets.goose;targets.goose=`http://127.0.0.1:${upstream.address().port}`;
+ const ui=createServer();await new Promise(r=>ui.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${ui.address().port}`;
+ try {
+  const config=await(await fetch(base+'/ui-config')).json();assert.deepEqual(Object.keys(config.targets),['native-full-real','native-real','mcp-real']);
+  assert.equal((await fetch(base+'/backend/goose/health/ready')).status,200);
+  assert.equal((await fetch(base+'/ui-config')).status,200);
+ } finally {
+  targets.goose=old;if(previous===undefined)delete process.env.VHT_COMPARE_ONLY;else process.env.VHT_COMPARE_ONLY=previous;
+  for(const server of [ui,upstream]){server.closeAllConnections();await new Promise(r=>server.close(r));}
+ }
+});

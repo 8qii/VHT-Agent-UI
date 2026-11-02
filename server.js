@@ -24,9 +24,6 @@ export const services = {
   'native-grouped': { transport: 'native', label: 'Native grouped', caption: 'Sandbox · JSONL → .NET worker', sandbox: true },
   'mcp-grouped': { label: 'MCP grouped', caption: 'Sandbox · MCP stdio → .NET server', sandbox: true },
 };
-if (process.env.VHT_COMPARE_ONLY === 'true') {
-  for (const key of Object.keys(targets)) if (!['native-full-real', 'native-real', 'mcp-real'].includes(key)) { delete targets[key]; delete services[key]; }
-}
 for (const value of Object.values(targets)) {
   const url = new URL(value);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
@@ -41,7 +38,8 @@ export function createServer() {
     res.setHeader('Referrer-Policy', 'no-referrer');
     if (url.pathname === '/ui-config' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-      res.end(JSON.stringify({ targets, services }));
+      const visible = process.env.VHT_COMPARE_ONLY === 'true' ? ['native-full-real', 'native-real', 'mcp-real'] : Object.keys(targets);
+      res.end(JSON.stringify({ targets: Object.fromEntries(visible.map(key => [key, targets[key]])), services: Object.fromEntries(visible.map(key => [key, services[key]])) }));
       return;
     }
     const proxy = url.pathname.match(/^\/backend\/(goose|dsh|native-grouped|mcp-grouped|native-full-real|native-real|mcp-real)(\/api\/chat(?:\/.*)?|\/api\/library(?:\/.*)?|\/api\/search|\/health\/ready)$/);
@@ -50,6 +48,7 @@ export function createServer() {
       if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) {
         res.writeHead(403); res.end('Cross-origin proxy access denied'); return;
       }
+      if (!targets[proxy[1]]) { res.writeHead(404); res.end('Unknown backend'); return; }
       const target = new URL(targets[proxy[1]]);
       target.pathname = target.pathname.replace(/\/$/, '') + proxy[2];
       target.search = url.search;
