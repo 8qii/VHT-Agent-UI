@@ -9,7 +9,24 @@ const mime = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript
 export const targets = {
   goose: process.env.VHT_BACKEND_URL || 'http://127.0.0.1:5062',
   dsh: process.env.VHT_DSH_BACKEND_URL || 'http://127.0.0.1:5062',
+  'native-full-real': process.env.VHT_NATIVE_FULL_REAL_URL || 'http://127.0.0.1:5071',
+  'native-real': process.env.VHT_NATIVE_REAL_URL || 'http://127.0.0.1:5069',
+  'mcp-real': process.env.VHT_MCP_REAL_URL || 'http://35.0.0.102:5062',
+  'native-grouped': process.env.VHT_NATIVE_GROUPED_URL || 'http://127.0.0.1:5067',
+  'mcp-grouped': process.env.VHT_MCP_GROUPED_URL || 'http://127.0.0.1:5068',
 };
+export const services = {
+  goose: { label: 'VHT Backend', caption: 'VHT-Agent-Backend' },
+  dsh: { label: 'VHT Backend DSH', caption: 'VHT-Agent-Backend-DSH' },
+  'native-full-real': { transport: 'native', label: 'Native full · dữ liệu thật', caption: 'Native full · toàn bộ tool được cấp quyền', demoUser: '00000000-0000-0000-0000-000000000001', sourceNote: 'Native full · Nguồn khách hàng thật; nạp toàn bộ schema được cấp cho lượt chạy. DB, lịch sử và file riêng; Documents vẫn theo quyền đính kèm. Cùng handler và guard với MCP grouped.' },
+  'native-real': { transport: 'native', label: 'Native grouped · dữ liệu thật', caption: 'Native grouped · nạp tool theo nhóm', demoUser: '00000000-0000-0000-0000-000000000001', sourceNote: 'Native grouped · Nguồn khách hàng thật; DB, file và bucket riêng. Hỗ trợ Query, Reporting, bản nháp Device Config và Documents qua API đính kèm. Accept là thao tác riêng, có thể TRY và tạo ConfigSetup Draft; không APPLY.' },
+  'mcp-real': { label: 'MCP grouped · dữ liệu thật', caption: 'Server 5062 · service MCP hiện có', sourceNote: 'MCP grouped · Service thật hiện có trên server 35.0.0.102:5062; giữ quyền và chức năng của hệ thống hiện tại.' },
+  'native-grouped': { transport: 'native', label: 'Native grouped', caption: 'Sandbox · JSONL → .NET worker', sandbox: true },
+  'mcp-grouped': { label: 'MCP grouped', caption: 'Sandbox · MCP stdio → .NET server', sandbox: true },
+};
+if (process.env.VHT_COMPARE_ONLY === 'true') {
+  for (const key of Object.keys(targets)) if (!['native-full-real', 'native-real', 'mcp-real'].includes(key)) { delete targets[key]; delete services[key]; }
+}
 for (const value of Object.values(targets)) {
   const url = new URL(value);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
@@ -24,10 +41,10 @@ export function createServer() {
     res.setHeader('Referrer-Policy', 'no-referrer');
     if (url.pathname === '/ui-config' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-      res.end(JSON.stringify({ targets }));
+      res.end(JSON.stringify({ targets, services }));
       return;
     }
-    const proxy = url.pathname.match(/^\/backend\/(goose|dsh)(\/api\/chat(?:\/.*)?|\/health\/ready)$/);
+    const proxy = url.pathname.match(/^\/backend\/(goose|dsh|native-grouped|mcp-grouped|native-full-real|native-real|mcp-real)(\/api\/chat(?:\/.*)?|\/api\/library(?:\/.*)?|\/api\/search|\/health\/ready)$/);
     if (proxy) {
       // Browser supplies owner authentication. Never read the workspace's private env.
       if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) {
@@ -37,7 +54,7 @@ export function createServer() {
       target.pathname = target.pathname.replace(/\/$/, '') + proxy[2];
       target.search = url.search;
       const headers = {};
-      for (const key of ['accept', 'content-type', 'authorization', 'x-demo-user', 'cookie', 'if-none-match', 'last-event-id']) {
+      for (const key of ['accept', 'content-type', 'authorization', 'x-demo-user', 'cookie', 'if-none-match', 'if-match', 'idempotency-key', 'last-event-id']) {
         if (req.headers[key]) headers[key] = req.headers[key];
       }
       const transport = target.protocol === 'https:' ? https : http;

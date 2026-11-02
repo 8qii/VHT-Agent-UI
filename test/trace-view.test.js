@@ -1,7 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { traceStep, mergeTracePage, displayTrace, TRACE_ITEM_LIMIT } from '../public/trace-view.js';
+import { traceStep, traceTotals, traceNeedsFinalRead, mergeTracePage, displayTrace, TRACE_ITEM_LIMIT } from '../public/trace-view.js';
 const event=(sequence,kind,data,extra={})=>({sequence,kind,data,runtimeRequestId:'r',runtimeSessionId:'s',...extra});
+test('token summary separates cumulative input from peak request and reports missing usage',()=>{
+ const t=traceTotals([event(1,'model.request',{}),event(2,'assistant/message',{usage:{inputTokens:100,outputTokens:5}}),
+ event(3,'model.request',{}),event(4,'assistant/message',{usage:{inputTokens:150,outputTokens:10}}),
+ event(5,'model.request',{}),event(6,'tool/call',{}),event(7,'tool/result',{message:{isError:true}})]);
+ assert.deepEqual(t,{modelCalls:3,knownUsageCalls:2,inputTokens:250,outputTokens:15,peakInputTokens:150,toolCalls:1,toolErrors:1});
+ assert.equal(traceTotals([event(1,'model.request',{})]).inputTokens,null);
+});
+test('token summary does not borrow usage from another binding or ambiguous outputs',()=>{
+ const t=traceTotals([event(1,'model.request',{}),event(2,'assistant/message',{usage:{inputTokens:999,outputTokens:9}},{runtimeRequestId:'foreign'})]);
+ assert.equal(t.knownUsageCalls,0);assert.equal(t.inputTokens,null);
+ assert.equal(traceTotals([event(1,'model.request',{}),event(2,'assistant/message',{usage:{inputTokens:10,outputTokens:2}}),event(3,'assistant/message',{usage:{inputTokens:20,outputTokens:3}})]).knownUsageCalls,0);
+});
 test('create_mcp and skill show exact domain/skill and match results by binding+callId',()=>{
  const items=[event(1,'tool/call',{callId:'a',name:'create_mcp',arguments:'{"kind":"inventory"}'}),
  event(2,'tool/result',{message:{toolCallId:'a',content:[{type:'text',text:'wrong binding'}]}},{runtimeRequestId:'other'}),
@@ -38,4 +50,24 @@ test('provider message content accepts both strings and typed blocks as readable
  const detail=traceStep([event(1,'model.request',{messages:[{role:'system',content:'Policy\nline2'},{role:'user',content:[{type:'text',text:'Question'}]}]},{modelCallId:'model-1'})],{stage:'model',modelCallId:'activity-model-1'});
  assert.match(detail.sections[0][1],/\[1\] SYSTEM\nPolicy\nline2/);
  assert.match(detail.sections[0][1],/\[2\] USER\nQuestion/);
+});
+
+test('native labels change presentation only and retain the original identifier',()=>{
+ const call=event(1,'tool/call',{callId:'x',name:'create_mcp',arguments:{kind:'inventory'}});
+ const span={stage:'tool',toolCallId:'x'};
+ assert.equal(traceStep([call],span,'native').title,'Nạp nhóm Native · inventory');
+ assert.equal(traceStep([call],span).title,'create_mcp · inventory');
+ assert.equal(traceStep([call],span,'native').sections.at(-1)[1],'create_mcp');
+ const tool=event(1,'tool/call',{callId:'x',name:'mcp__inventory__inventory_list_devices',arguments:{}});
+ assert.equal(traceStep([tool],span,'native').title,'Native tool · inventory · inventory_list_devices');
+ assert.equal(traceStep([], {stage:'tool',toolName:'mcp__inventory__inventory_list_devices'},'native').title,'Native tool · inventory · inventory_list_devices');
+});
+test('a trace fetched before terminal is refreshed for late model requests and usage',()=>{
+ let cache=mergeTracePage(null,{items:[event(1,'model.request',{}),event(2,'assistant/message',{usage:{inputTokens:100,outputTokens:5}}),event(3,'model.request',{})]});
+ assert.equal(traceTotals(cache.items).knownUsageCalls,1);
+ assert(traceNeedsFinalRead(cache,true));assert(!traceNeedsFinalRead({...cache,loading:true},true));
+ cache=mergeTracePage(cache,{items:[event(4,'assistant/message',{usage:{inputTokens:200,outputTokens:6}}),event(5,'model.request',{}),event(6,'assistant/message',{usage:{inputTokens:300,outputTokens:7}})]});
+ cache.finalized=true;
+ assert.deepEqual([traceTotals(cache.items).modelCalls,traceTotals(cache.items).knownUsageCalls,traceTotals(cache.items).inputTokens],[3,3,600]);
+ assert(!traceNeedsFinalRead(cache,true));assert(!traceNeedsFinalRead({...cache,finalized:false},false));
 });

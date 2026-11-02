@@ -139,3 +139,12 @@ Tổng thời gian lấy Backendwallclock, không cộng các span song song. Ch
 Chi tiết hoạt động (28/10/2026): mở Hoạt động để đọc owner-authorized `/api/chat/runs/{runId}/trace` bằng cùng Backend/tài khoản đang chat. Mỗi tool ghép theo call ID và runtime binding; Model ghép theo model call ID. create_mcp hiển thị domain, skill hiển thị tên kỹ năng. Mở bước Model xem messages theo vai trò, schemas/cấu hình và đầu ra; mở tool xem arguments/result. Khung nội dung có scroll riêng; metadata nằm trong disclosure phụ. Đây là các bản ghi đã thu, không suy diễn suy luận ẩn hoặc coi tool result là câu trả lời đã kiểm chứng.
 
 Trace chỉ giữ trong bộ nhớ tab (tối đa3run,1000events/8MiB mỗi run; mỗi khung nội dung160k ký tự và báo giới hạn), không đưa prompt/result vào localStorage hoặc event journal. Khi panel đang mở và run đang chạy, đọc bổ sung qua GET3s/lần; SSE timing/text hiện có giữ nguyên. Mỗi lượt đọc tối đa2page100events/page, còn trang có nút Đọc tiếp chi tiết. Scope/backend/account đổi sẽ xóa cache.404/401/403/trace disabled/expired/thiếu capture hiện rõ, không tự đổi tài khoản/Backend hoặc sinh payload thay thế.
+# So sánh Native grouped / MCP grouped local
+
+Thanh trên cùng có bộ chọn **Native grouped** (5067) / **MCP grouped** (5068). Hai proxy có URL cấu hình `VHT_NATIVE_GROUPED_URL`, `VHT_MCP_GROUPED_URL`; hai lựa chọn Backend cũ được giữ. Chọn sandbox tự dùng demo user `00000000-0000-0000-0000-000000000003`. Lịch sử tách theo service/URL/owner; chuyển service chỉ ngắt observer GET, không hủy run. Mở **Hoạt động** để xem prompt/schema/tool args/result/timing và token input/output cộng dồn, input lớn nhất mỗi request, tỷ lệ có usage. Thống kê trace giới hạn không phải tự động chấm chất lượng.
+
+Hai service được dựng riêng tại `sandboxes/grouped-chat/` của workspace VNC; xem `README.vi.md` và `RESULTS.vi.md` tại đó để biết cách start/stop, ground truth và giới hạn. Nguồn LAB synthetic; Documents/execution production chưa được cấu hình trong sandbox này.
+
+## Real customer comparison deployment
+
+`VHT_NATIVE_FULL_REAL_URL` selects the Native full Backend; `VHT_NATIVE_REAL_URL` selects Native grouped; `VHT_MCP_REAL_URL` selects the existing MCP grouped Backend. All URLs are used by the server proxy, so browser clients do not need direct access to Backend ports. Set `VHT_COMPARE_ONLY=true` to show only these three real-data services, and `HOST=0.0.0.0` for LAN/server hosting. Each service keeps separate history.

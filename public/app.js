@@ -1,4 +1,4 @@
-import { mergeTracePage, traceStep } from './trace-view.js';
+import { mergeTracePage, traceStep, traceTotals, traceNeedsFinalRead } from './trace-view.js';
 import { marked } from './vendor/marked.js';
 import DOMPurify from './vendor/purify.js';
 import { ChatApi, initialRun, observeRun, isTerminal, statusName, allowedAction, artifactPath, randomId, applyActivitySnapshot, activityDuration, formatDuration, activityPhase } from './core.js';
@@ -88,8 +88,14 @@ async function loadScope() {
   checkHealth();
 }
 function updateChrome() {
-  $('#backend-label').textContent = prefs.backend === 'dsh' ? 'VHT Backend DSH' : 'VHT Backend';
-  $('#backend-caption').textContent = prefs.backend === 'dsh' ? 'VHT-Agent-Backend-DSH' : 'VHT-Agent-Backend';
+  const service = config.services?.[prefs.backend];
+  $('#backend-label').textContent = service?.label || (prefs.backend === 'dsh' ? 'VHT Backend DSH' : 'VHT Backend');
+  $('#backend-caption').textContent = service?.caption || (prefs.backend === 'dsh' ? 'VHT-Agent-Backend-DSH' : 'VHT-Agent-Backend');
+  $('#service-switch').value = prefs.directUrl ? '' : prefs.backend;
+  $('#service-switch').disabled = sending;
+  const sourceNote = service?.sourceNote || (service?.sandbox ? 'Sandbox · Dữ liệu LAB giả lập: LAB-1…6. DB và lịch sử riêng. Không phải dữ liệu khách hàng.' : '');
+  $('#sandbox-note').textContent = sourceNote;
+  $('#sandbox-note').hidden = !!prefs.directUrl || !sourceNote;
   $('#owner-caption').textContent = prefs.mode === 'demo' ? 'Development · Demo user' : prefs.mode === 'bearer' ? 'Bearer · phiên của tab' : 'Cookie · phiên đăng nhập';
 }
 function renderHistory() {
@@ -233,7 +239,8 @@ async function loadTrace(runId) {
   const key = traceKey(runId), generation = selection, client = api();
   let cached = privateTraces.get(key) || { items: [], cursor: 0, bytes: 0 };
   if (cached.loading || cached.limited) return;
-  cached = { ...cached, loading: true, error: '' }; privateTraces.set(key, cached);
+  const terminalAtStart = activeConversation()?.messages.some(m => m.state?.runId === runId && isTerminal(m.state.status) && m.state.hydrated);
+  cached = { ...cached, loading: true, error: '', finalized: false }; privateTraces.set(key, cached);
   while (privateTraces.size > 3) privateTraces.delete(privateTraces.keys().next().value);
   scheduleRender();
   try {
@@ -250,7 +257,14 @@ async function loadTrace(runId) {
       ? 'Không tìm thấy trace trên Backend/tài khoản đang chọn.'
       : error.status === 401 || error.status === 403 ? 'Không có quyền đọc trace bằng phiên đăng nhập hiện tại.' : 'Chưa đọc được chi tiết trace; có thể nhấn đọc lại.'; }
   } finally {
-    if (privateTraces.get(key) === cached) { cached.loading = false; if (generation === selection) scheduleRender(); }
+    if (privateTraces.get(key) === cached) {
+      cached.loading = false; cached.finalized = !!terminalAtStart && !cached.hasMore && !cached.error && !cached.limited;
+      if (generation === selection) {
+        scheduleRender();
+        const terminalNow = activeConversation()?.messages.some(m => m.state?.runId === runId && isTerminal(m.state.status) && m.state.hydrated);
+        if (!terminalAtStart && traceNeedsFinalRead(cached, terminalNow)) queueMicrotask(() => loadTrace(runId));
+      }
+    }
   }
 }
 function traceSection(runId, spanId, heading, text) {
@@ -267,14 +281,14 @@ setInterval(() => {
   if (document.hidden || !conversation) return;
   for (const message of conversation.messages) {
     const state = message.state;
-    if (state && openActivityRuns.has(state.runId) && !isTerminal(state.status) && !['WaitingConfirmation','Uncertain'].includes(state.status)) loadTrace(state.runId);
+    if (state && openActivityRuns.has(state.runId) && ((!isTerminal(state.status) && !['WaitingConfirmation','Uncertain'].includes(state.status)) || traceNeedsFinalRead(privateTraces.get(traceKey(state.runId)), isTerminal(state.status) && state.hydrated))) loadTrace(state.runId);
   }
 }, 3000);
 function renderActivity(state) {
   const panel = el('details', 'activity-panel'); panel.open = openActivityRuns.has(state.runId);
   panel.addEventListener('toggle', () => {
     if (!panel.isConnected) return;
-    if (panel.open) { openActivityRuns.add(state.runId); if (!activityAttempts.has(`${scope}:${state.runId}`)) loadActivity(state.runId); if (!privateTraces.has(traceKey(state.runId))) loadTrace(state.runId); }
+    if (panel.open) { openActivityRuns.add(state.runId); if (!activityAttempts.has(`${scope}:${state.runId}`)) loadActivity(state.runId); if (!privateTraces.has(traceKey(state.runId)) || traceNeedsFinalRead(privateTraces.get(traceKey(state.runId)), isTerminal(state.status) && state.hydrated)) loadTrace(state.runId); }
     else openActivityRuns.delete(state.runId);
   });
   const rows = state.activitySpans || [], active = rows.filter(s => s.state === 'started');
@@ -288,6 +302,11 @@ function renderActivity(state) {
   const trace = privateTraces.get(traceKey(state.runId));
   toolbar.append(button(trace?.loading ? 'Đang đọc chi tiết…' : trace?.hasMore ? 'Đọc tiếp chi tiết' : 'Đọc lại chi tiết', () => loadTrace(state.runId), 'activity-refresh'));
   content.append(toolbar, el('p', 'activity-help', `Backend: ${prefs.backend} · ${baseUrl()}. Chi tiết lấy từ trace đã che bí mật, chỉ tài khoản sở hữu run đọc được; không lưu prompt/kết quả vào lịch sử trình duyệt.`));
+  if (trace?.items.length) {
+    const t = traceTotals(trace.items), num = n => n == null ? 'chưa biết' : n.toLocaleString('vi-VN');
+    content.append(el('p', 'trace-totals', `Đã ghi nhận: ${t.modelCalls} lần model · ${t.toolCalls} tool call · ${t.toolErrors} tool lỗi. Token input cộng dồn: ${num(t.inputTokens)} · output: ${num(t.outputTokens)} · input lớn nhất/request: ${num(t.peakInputTokens)}. Usage: ${t.knownUsageCalls}/${t.modelCalls} request.`));
+    content.append(el('p', 'activity-help', 'Input cộng dồn tính mọi vòng gọi model; không phải độ dài context một request. Output gồm cả chọn tool. Trạng thái hoàn thành và số tool lỗi không tự chứng minh câu trả lời đúng; đối chiếu nội dung với nguồn trong từng bước.'));
+  }
   if (trace?.error) content.append(el('p', 'error-note', trace.error));
   if (trace?.limited || trace?.truncated || trace?.hasMore) content.append(el('p', 'activity-empty', 'Chi tiết chưa đầy đủ hoặc đã giới hạn; dùng “Đọc tiếp chi tiết” khi còn trang.'));
   if (trace && !trace.items.length && !trace.loading && !trace.error) content.append(el('p', 'activity-empty', `Chưa có nội dung trace. Trạng thái thu: ${trace.captureStatus || 'chưa rõ'}.`));
@@ -300,7 +319,7 @@ function renderActivity(state) {
     const item = el('details', `activity-row ${span.state}`), key = `${state.runId}:${span.spanId}`;
     item.open = openActivityRows.has(key);
     item.addEventListener('toggle', () => { if (!item.isConnected) return; if (item.open) openActivityRows.add(key); else openActivityRows.delete(key); });
-    const detail = traceStep(trace?.items, span);
+    const detail = traceStep(trace?.items, span, prefs.directUrl ? undefined : config.services?.[prefs.backend]?.transport);
     const title = el('summary'), info = el('div', 'activity-info');
     info.append(el('strong', '', detail.title));
     const phase = activityPhase(rows, rows.indexOf(span));
@@ -438,6 +457,7 @@ function scheduleRender() {
 function updateComposer() {
   const run = activeRun(), conversation = activeConversation(), pending = Boolean(conversation?.pending);
   $('#send-button').disabled = !$('#prompt').value.trim() || sending || pending || Boolean(run);
+  $('#service-switch').disabled = sending;
   $('#cancel-run').hidden = !run || isTerminal(run.status) || ['WaitingConfirmation', 'Uncertain'].includes(run.status);
   $('#cancel-run').disabled = Boolean(run?.cancellationRequestedAt) || sending;
   $('#composer-status').textContent = sending ? 'Đang gửi tin nhắn' : pending ? 'Chờ xác nhận lần gửi' : run ? statusLabels[run.status] || 'Đang xử lý' : 'Sẵn sàng trò chuyện';
@@ -514,7 +534,7 @@ async function checkHealth() {
 }
 function updateSettingsFields() {
   const backend = $('input[name=backend]:checked').value;
-  $('#target-url').textContent = config.targets[backend] + (config.targets.goose === config.targets.dsh ? ' · Hai lựa chọn dùng cùng cổng; kết nối stack đang chạy.' : '');
+  $('#target-url').textContent = config.targets[backend] + (config.services?.[backend]?.sandbox ? ' · Dữ liệu LAB sandbox, không phải thiết bị thật.' : '');
   $('#demo-field').hidden = $('#auth-mode').value !== 'demo'; $('#bearer-field').hidden = $('#auth-mode').value !== 'bearer';
 }
 function openSettings() {
@@ -578,7 +598,19 @@ $('#prompt').addEventListener('keydown', event => { if (event.key === 'Enter' &&
 document.addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); newChat(); } });
 $('.new-chat kbd').textContent = navigator.platform.includes('Mac') ? '⌘ K' : 'Ctrl K';
 $('#settings-open').addEventListener('click', openSettings); $('#backend-open').addEventListener('click', openSettings); $('#settings-form').addEventListener('submit', saveSettings);
-$('#auth-mode').addEventListener('change', updateSettingsFields); document.querySelectorAll('input[name=backend]').forEach(node => node.addEventListener('change', updateSettingsFields));
+$('#auth-mode').addEventListener('change', updateSettingsFields); document.querySelectorAll('input[name=backend]').forEach(node => node.addEventListener('change', () => {
+  if (config.services?.[node.value]?.sandbox || config.services?.[node.value]?.demoUser) { $('#auth-mode').value = 'demo'; $('#demo-user').value = config.services[node.value].demoUser || '00000000-0000-0000-0000-000000000003'; }
+  updateSettingsFields();
+}));
+$('#service-switch').addEventListener('change', async event => {
+  const backend = event.target.value;
+  if (sending || !config.targets[backend]) { updateChrome(); toast('Đợi lần gửi được xác nhận trước khi đổi service.'); return; }
+  // Leave the running server turn intact; only detach this browser observer.
+  save();
+  prefs = { ...prefs, backend, directUrl: '', ...(config.services?.[backend]?.sandbox || config.services?.[backend]?.demoUser ? { mode: 'demo', demoUser: config.services[backend].demoUser || '00000000-0000-0000-0000-000000000003' } : {}) };
+  try { localStorage.setItem('vht-ui:settings', JSON.stringify(prefs)); } catch {}
+  await loadScope(); toast('Đã chuyển sang ' + (config.services?.[backend]?.label || backend));
+});
 document.querySelectorAll('.close-dialog').forEach(node => node.addEventListener('click', () => node.closest('dialog').close()));
 $('#health-check').addEventListener('click', checkHealth);
 $('#menu-toggle').addEventListener('click', () => $('#sidebar').classList.toggle('open')); $('#sidebar-overlay').addEventListener('click', () => $('#sidebar').classList.remove('open'));
@@ -598,5 +630,5 @@ $('#clear-history').addEventListener('click', () => {
   observer?.abort(); selection++; conversations = []; selectedId = null; save(); $('#settings-dialog').close(); renderHistory(); renderMessages(); updateComposer();
 });
 window.addEventListener('pagehide', () => { clearTimeout(storageTimer); save(); observer?.abort(); });
-try { const response = await fetch('/ui-config'); if (!response.ok) throw new Error(); config = await response.json(); await loadScope(); }
+try { const response = await fetch('/ui-config'); if (!response.ok) throw new Error(); config = await response.json(); for (const option of $('#service-switch').options) option.hidden = !config.targets[option.value]; for (const radio of document.querySelectorAll('input[name=backend]')) radio.closest('label').hidden = !config.targets[radio.value]; if (!config.targets[prefs.backend]) prefs.backend = config.targets['mcp-real'] ? 'mcp-real' : 'goose'; await loadScope(); }
 catch (error) { console.error('UI initialization failed:', error.message); toast('Không lấy được cấu hình UI. Khởi động UI bằng ./start.sh và tải lại trang.'); }

@@ -35,6 +35,15 @@ test('reducer resets snapshot, appends/replaces generations and preserves nullab
   state = reduceRun({ ...state, sequence: 0 }, event('snapshot', 1, { text: null, status: 'WaitingConfirmation' }));
   assert.equal(state.text, ''); assert.equal(state.terminal, false);
 });
+test('two full replacements after quoted preview keep exactly one canonical answer', () => {
+  let state = initialRun('s', 'r');
+  const event = (sequence, fields) => ({ version: 2, sessionId: 's', runId: 'r', kind: 'assistant.text', sequence, ...fields });
+  state = reduceRun(state, event(1, { operation: 'replace', text: 'Tên là "Leaf", ', provisional: true, textSource: 'model_stream' }));
+  const answer = 'Tên là "Leaf", Vendor "Cisco". Hoàn tất.';
+  state = reduceRun(state, event(2, { operation: 'replace', text: answer, provisional: true, textSource: 'committed_message' }));
+  state = reduceRun(state, event(3, { operation: 'replace', text: answer, provisional: false, textSource: 'canonical' }));
+  assert.equal(state.text, answer); assert.equal(state.provisional, false);
+});
 test('reducer rejects cross-run events, duplicate sequence and unknown wire versions', () => {
   const state = initialRun('s', 'r'), event = { version: 2, sessionId: 's', runId: 'r', kind: 'snapshot', sequence: 1 };
   assert.throws(() => reduceRun(state, { ...event, runId: 'other' }), /MISMATCHED/);
