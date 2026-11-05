@@ -42,7 +42,8 @@ Sau khi đổi `.env`, khởi động lại UI. URL cũng có thể có deployme
 - Lần gửi bị mất receipt có nút **Thử lại lần gửi này**, giữ session và idempotency key. Pending submission được lưu trước POST.
 - **Dừng** gửi cancellation API thật; đóng tab hoặc ngắt stream không hủy run.
 - **Events** ở thanh trên mở lịch sử public SSE của câu trả lời hiện tại: snapshot, assistant.text, agent.progress, run.terminal. Nhấn từng event để xem field công khai và text fragment; nhãn cạnh VHT Agent phân biệt SSE trực tiếp, reconnect, polling và đã kết thúc. Run đã xong vẫn giữ events nhận được ở UI, kể cả sau reload; tối đa 200 event/run, text preview tối đa 1.000 ký tự/event. **Đọc snapshot SSE** chỉ GET run cũ, không POST prompt, không replay các token chưa được ghi nhận.
-- Proposal hiển thị candidate/rollback/diff. Chỉ hiện approve/reject/revise khi canonical response trả đúng action contract cho run hiện tại. Duyệt cần thao tác xác nhận và có thể kích hoạt TRY/CREATE theo backend. UI không tự thực hiện hành động hoặc tự retry mutation khi mất receipt.
+- Device Config V3 có hai editor config/rollback, Lưu cặp/Lưu tất cả, Try từng cặp/Try tất cả và Accept. Save lưu thẳng Backend; Accept gửi một command để Backend TRY toàn bộ rồi CREATE một Draft. Chỉ thao tác **Yêu cầu AI sửa** mới gọi Agent. Các nút dùng capability/reference của card, không lấy CLI từ lời văn. Xem [hướng dẫn Device Config](docs/device-config-review.vi.md).
+- Proposal V1 giữ allowlist action cũ; V2 đọc và Accept bằng đúng revision/hash/reviewVersion. UI không tự retry mutation khi mất biên nhận; nút lấy lại biên nhận giữ nguyên request/key. Unknown khóa thực thi mới và dùng đối soát khi Backend hỗ trợ.
 - Báo cáo tải bằng authenticated fetch từ artifact endpoint; lỗi 409/410/404 hiển thị rõ, không giả file thành công.
 
 ## API và các điểm sửa so với tài liệu Word

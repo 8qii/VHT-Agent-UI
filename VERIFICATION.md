@@ -52,3 +52,15 @@ Live read-only verification on the user existing run `ba2cd425-f74b-4796-85af-a1
 ## HTTP origin and server deployment update
 
 13 Node and 13 Chromium checks PASS. Added secure UUID v4 fallback for origins without crypto.randomUUID and browser check without crypto.subtle/randomUUID: UI init, prompt submit and reload work; js-sha256 fallback matches the known SHA256 abc vector. Added user-level systemd deployment unit and startup support for a user-local Node installation. Generated verification files remain local.
+
+## Device Config V3 — 04 November 2026
+
+59 Node checks,19 Device Config Chromium journeys and13 existing Chromium regression journeys PASS. Contract/API fixture through the actual Node proxy;0 real model/TRY/CREATE calls. Source syntax and whitespace checks PASS. Evidence is in workspace `audit-results/2026-11-04/device-config-ui/`; browser screenshots/results under `test-results/config-review/<timestamp>/`.
+
+Covered full-pair and rollback-only editing, exact whitespace, Save all, empty rollback, per-device Try/progress, stale results, Accept failure/retry/one common Draft, lost Save/Try receipts, same-key replay, reload during Try, two-tab CAS conflicts, Unknown/reconcile, optional AI NoRevision, owner auth, memory-only buffers, conversation switching,50-target display/filter and390px mobile keyboard/focus/layout. V1 existing action behavior remains covered by original browser regression; V2 without the new workflow route is covered by a unit contract test.
+
+UI implementation is local/uncommitted. Real Backend + Agent + PostgreSQL/customer end-to-end qualification and server deployment were not run. Direct features need a V3 card from the migrated/flag-enabled Backend; UI does not change flags, upgrade existing V2 proposals or implement partial Accept. See `docs/device-config-review.vi.md` for recovery and storage limits.
+
+### Actual workflow DTO serialization fix
+
+User UAT exposed that concrete `workflow.current` omits `kind`, while polymorphic `presentationBlocks` includes it. The earlier HTTP fixture included it in both and missed this integration difference. Regression first reproduced FAIL, then type-label normalization at the known workflow endpoint fixed the lock. No reference/capability fabrication or Backend change. Final61Node/20DeviceConfig browser PASS, including missing-kind wire and negative missing-reference/capability cases. Read-only controller verification against the user's actual saved proposal via UI proxy confirms Edit/Try/Accept enabled with the same IDs/hash; no real Save/TRY/CREATE or model generation. Refresh now gives visible feedback and disabled buttons explain their conditions. Evidence: workspace `audit-results/2026-11-04/device-config-ui-refresh-fix/`.

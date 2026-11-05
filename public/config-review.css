@@ -1,0 +1,65 @@
+/* Device Config review cards, editors and operation progress. */
+.config-toolbar-help { margin:0; padding:0 15px 8px; font-size:11px; line-height:1.7; color:#79684f; }
+.config-refresh-result { font-size:10px; color:#78836e; }
+.config-review { color:#554a3e; min-width:0}
+.config-title { justify-content:space-between; flex-wrap:wrap; gap:8px}
+.config-state { font-size:10px; font-weight:400; color:#79684f; background:#f1ecdf; border-radius:5px; padding:4px 7px}
+.config-toolbar,.config-pair-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding:10px 15px}
+.config-button { border:1px solid #d8cdbd; background:#fffefa; color:#695641; border-radius:6px; padding:8px 10px; font-size:11px; line-height:1.4; cursor:pointer}
+.config-button:hover:enabled { border-color:#a98f6b; background:#f6f0e5}
+.config-button:disabled { opacity:.45; cursor:default}
+.config-button:focus-visible,.config-filter:focus-visible { outline:2px solid #9e6e50; outline-offset:2px}
+.config-save-all,.config-save { background:#eee9dc}
+.config-accept { background:var(--red); border-color:var(--red); color:#fff; margin-top:12px}
+.config-accept:hover:enabled { background:var(--red-hover); color:#fff}
+.config-filter { margin-left:auto; border:1px solid #ded5c6; padding:7px; border-radius:5px; max-width:100%; background:#fffefa; font-size:11px; color:#695641}
+.config-feedback { padding:0 15px; font-size:11px; line-height:1.7; overflow-wrap:anywhere}
+.config-feedback:empty { display:none}
+.config-feedback p { margin:8px 0}
+.config-error { color:#a84436}
+.config-target { border-top:1px solid #e6ded0; min-width:0}
+.config-target-title { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:14px 15px; cursor:pointer; font-size:12px; list-style:none}
+.config-target-title::before { content:'›'; font-size:17px}
+.config-target[open]>.config-target-title::before { transform:rotate(90deg)}
+.config-target-title::-webkit-details-marker { display:none}
+.config-pair-status { margin-left:auto; font-size:10px; color:#806844}
+.config-dirty { font-size:10px; color:#ae6840}
+.config-target-body { padding:0 15px 15px; min-width:0}
+.config-panes { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px}
+.config-pane { min-width:0; border:1px solid #e6dfd2; border-radius:7px; overflow:hidden; background:#faf8f3}
+.config-pane-title { display:flex; align-items:center; justify-content:space-between; gap:5px; padding:9px 10px; font-size:11px; border-bottom:1px solid #e6dfd2}
+.config-edit { font-size:10px; padding:4px 7px; white-space:nowrap}
+.config-code { white-space:pre; overflow:auto; max-height:360px; margin:0; padding:12px; font:11px/1.75 ui-monospace,SFMono-Regular,Consolas,monospace; color:#4c5147; tab-size:4}
+.config-editor { display:block; width:100%; min-height:190px; height:240px; resize:vertical; overflow:auto; border:0; background:#fffdf6; color:#41473c; padding:12px; font:12px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace; tab-size:4; border-radius:0}
+.config-editor:focus { outline:2px solid #b59b72; outline-offset:-2px}
+.config-editor:disabled { background:#f1ede5; color:#81796b}
+.config-edit-hint { font-size:10px; line-height:1.7; color:#98734e; margin:7px 0}
+.config-pair-actions { padding:6px 0}
+.config-result { background:#f1f3ea; border:1px solid #e0e5d5; padding:10px 12px; border-radius:6px; margin:10px 0; font-size:11px; line-height:1.7; overflow-wrap:anywhere}
+.config-result p { margin:5px 0}
+.config-source { font-size:10px; margin-top:12px; color:#8b795e}
+.config-source summary { cursor:pointer}
+.config-omitted { font-size:11px; padding:12px 15px; border-top:1px solid #e6ded0; overflow-wrap:anywhere}
+.config-operation { padding:12px 15px; background:#f4f1e7; border-top:1px solid #e6ded0; font-size:11px; line-height:1.7; overflow-wrap:anywhere}
+.config-operation small { display:block; font-size:9px; margin-bottom:8px}
+.config-footer { padding:14px 15px; border-top:1px solid #e6ded0; font-size:11px; line-height:1.7; background:#fcfaf4}
+.config-footer p { margin:0 0 6px}
+.config-footer small { display:block; color:#8c7d65; font-size:10px}
+.config-block-reason { margin-top:10px!important; color:#a27251; overflow-wrap:anywhere}
+.config-history,.config-chat { border-top:1px solid #e6ded0; padding:12px 15px; font-size:11px; line-height:1.7}
+.config-history summary,.config-chat summary { cursor:pointer}
+.config-chat-input { display:block; margin:12px 0; width:100%; min-height:80px; resize:vertical; border:1px solid #ddd3c4; padding:10px; border-radius:6px; font:inherit}
+.config-coverage { margin-top:8px!important}
+.config-review .error-note { margin:10px 15px}
+.config-review .error-note button { padding:8px 10px}
+.config-retry-receipt { margin:8px 15px}
+@media(max-width:900px) { .config-panes { grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:760px) { .config-target-title,.config-target-body,.config-toolbar,.config-footer { padding-left:10px; padding-right:10px}
+.config-target-title { font-size:11px}
+.config-button { font-size:10px}
+.config-filter { margin-left:0}
+.config-editor { font-size:12px}
+.config-pair-status { margin-left:0}
+.config-code { font-size:10px}
+}

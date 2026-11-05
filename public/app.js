@@ -2,6 +2,8 @@ import { mergeTracePage, traceStep, traceTotals, traceNeedsFinalRead } from './t
 import { marked } from './vendor/marked.js';
 import DOMPurify from './vendor/purify.js';
 import { ChatApi, initialRun, observeRun, isTerminal, statusName, allowedAction, artifactPath, randomId, applyActivitySnapshot, activityDuration, formatDuration, activityPhase } from './core.js';
+import { ConfigReview, isReviewCard, historyForStorage } from './config-review.js';
+import { createConfigReviewView, captureConfigFocus, restoreConfigFocus } from './config-review-view.js';
 
 const $ = selector => document.querySelector(selector);
 const ICONS = {
@@ -51,25 +53,31 @@ const openEventRuns = new Set();
 const openEventRows = new Set();
 const openActivityRuns = new Set(), openActivityRows = new Set(), activityLoading = new Set(), activityAttempts = new Set();
 const privateTraces = new Map(), traceScroll = new Map();
+const configReviews = new Map();
+const selectedReviews = () => [...configReviews.values()].filter(v => v.conversationId === selectedId);
 const traceKey = runId => `${scope}:${runId}`;
 const connectionLabels = { connecting: 'Đang mở SSE', live: 'SSE trực tiếp', reconnecting: 'SSE đang kết nối lại', polling: 'Theo dõi qua GET', closed: 'SSE đã kết thúc', error: 'Lỗi kết nối' };
 try { prefs = JSON.parse(localStorage.getItem('vht-ui:settings')) || {}; } catch { prefs = {}; }
 prefs = { backend: 'goose', mode: 'demo', demoUser: '00000000-0000-0000-0000-000000000001', directUrl: '', ...prefs };
 const activeConversation = () => conversations.find(c => c.localId === selectedId);
 const latestState = () => activeConversation()?.messages.filter(m => m.role === 'assistant' && m.state).at(-1)?.state;
-const activeRun = () => { const s = latestState(); return s && (!isTerminal(s.status) || !s.hydrated) ? s : null; };
+const activeRun = () => { const s = latestState();
+  if (s?.status === 'WaitingConfirmation' && s.hydrated && s.blocks?.some(isReviewCard)) return null;
+  return s && (!isTerminal(s.status) || !s.hydrated) ? s : null;
+};
 function baseUrl() { return prefs.directUrl || `/backend/${prefs.backend}`; }
 function api() { return new ChatApi(baseUrl(), prefs.mode === 'demo' ? { 'X-Demo-User': prefs.demoUser } : prefs.mode === 'bearer' ? { Authorization: `Bearer ${authToken}` } : {}); }
 function toast(text) { $('#toast').textContent = text; $('#toast').classList.add('visible'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').classList.remove('visible'), 4500); }
 function save() {
   // Cookie identity can change outside this app; don't persist an unknown owner's chat.
   if (prefs.mode === 'cookie') return;
-  try { localStorage.setItem(scope, JSON.stringify({ selectedId, conversations })); }
+  try { localStorage.setItem(scope, historyForStorage({ selectedId, conversations })); }
   catch { toast('Không lưu được lịch sử vào trình duyệt. Bạn vẫn có thể tiếp tục trong tab này.'); }
 }
 function persistSoon() { clearTimeout(storageTimer); storageTimer = setTimeout(save, 300); }
 async function loadScope() {
   selection++; observer?.abort(); clearTimeout(storageTimer); sending = false;
+  for (const view of configReviews.values()) view.review.dispose(); configReviews.clear();
   privateTraces.clear(); traceScroll.clear();
   const identity = prefs.mode === 'bearer' ? authToken : prefs.mode === 'demo' ? prefs.demoUser : 'cookie';
   const input = new TextEncoder().encode([prefs.backend, prefs.directUrl || config.targets[prefs.backend], prefs.mode, identity].join('|'));
@@ -84,6 +92,7 @@ async function loadScope() {
   }
   if (!activeConversation()) selectedId = conversations[0]?.localId;
   updateChrome(); renderHistory(); renderMessages(); updateComposer();
+  save(); void hydrateStoredConfigs();
   if (latestState()) startObserver();
   checkHealth();
 }
@@ -111,9 +120,50 @@ function renderHistory() {
 }
 function selectConversation(id) {
   if (sending) { toast('Đang gửi yêu cầu. Vui lòng đợi kết quả gửi.'); return; }
-  selection++; observer?.abort(); selectedId = id; save();
+  selection++; observer?.abort(); for (const view of configReviews.values()) view.review.pause(); selectedId = id; save();
   $('#sidebar').classList.remove('open'); renderHistory(); renderMessages(); updateComposer();
   if (latestState()) startObserver();
+  void hydrateStoredConfigs();
+}
+async function hydrateStoredConfigs() {
+  const conversation = activeConversation(), ownerScope = scope, client = api();
+  for (const message of conversation?.messages || []) {
+    if (!message.state?.blocks?.some(b => b.kind === 'configProposal' && b.needsHydration)) continue;
+    try {
+      const response = await client.getResponse(message.state.runId);
+      if (scope !== ownerScope) return;
+      if (message.state.blocks.some(b => b.needsHydration)) {
+        message.state = { ...message.state, text: response.text || '', blocks: response.presentationBlocks || [], actions: response.actions || [] };
+        persistSoon(); if (conversation === activeConversation()) scheduleRender();
+      }
+    } catch { /* The review panel exposes its own authenticated refresh error. */ }
+  }
+}
+function renderConfigReview(card, message) {
+  const key = `${message.localId || message.state.runId}:${card.workflowId || card.proposalId}`;
+  let view = configReviews.get(key);
+  if (!view) {
+    const ownerScope = scope;
+    const review = new ConfigReview(api(), card, { metadata: message.configReview, onChange: metadata => {
+      if (scope !== ownerScope) return;
+      const changed = JSON.stringify(message.configReview) !== JSON.stringify(metadata);
+      message.configReview = metadata;
+      if (changed) save(); else persistSoon();
+      updateComposer();
+    } });
+    view = { review, node: createConfigReviewView(review), conversationId: activeConversation().localId };
+    configReviews.set(key, view);
+  }
+  const conversation = activeConversation(), index = conversation.messages.indexOf(message);
+  const hasNewerCard = conversation.messages.slice(index + 1).some(m => m.state?.blocks?.some(b =>
+    isReviewCard(b) && b.workflowId && b.workflowId === card.workflowId));
+  const blocked = sending || !!conversation.pending || !!activeRun() || hasNewerCard;
+  if (view.review.externalBusy !== blocked) {
+    view.review.externalBusy = blocked;
+    view.review.readOnlyReason = hasNewerCard ? 'Đã có card mới hơn của bản cấu hình này trong cuộc trò chuyện. Dùng card mới để thao tác.' : blocked ? 'Đợi lượt chat hiện tại hoàn tất trước khi thao tác cấu hình.' : '';
+    view.review.emit();
+  }
+  view.review.activate(); return view.node;
 }
 function newChat() { selectConversation(null); $('#prompt').value = ''; fitTextarea(); $('#prompt').focus(); }
 function markdown(text) {
@@ -389,6 +439,7 @@ function renderEvents(state) {
   detail.append(content); return detail;
 }
 function renderMessages() {
+  const configFocus = captureConfigFocus();
   const scroll = $('#chat-scroll'), nearBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 130;
   const eventScroll = new Map([...document.querySelectorAll('.event-list')].map(node => [node.dataset.runId, { top: node.scrollTop, bottom: node.scrollHeight - node.scrollTop - node.clientHeight < 40 }]));
   const conversation = activeConversation();
@@ -419,8 +470,8 @@ function renderMessages() {
     }
     else if (isTerminal(state.status)) body.append(el('div', 'empty-answer', state.hydrated ? 'Run đã kết thúc và không có nội dung trả lời.' : 'Đang đọc câu trả lời đã lưu…'));
     else { const typing = el('div', 'typing'); typing.setAttribute('aria-label', 'Agent đang xử lý'); for (let i = 0; i < 3; i++) typing.append(el('span')); body.append(typing); }
-    const presentation = el('div', 'presentation'); for (const block of state.blocks || []) { const view = renderBlock(block); if (view) presentation.append(view); } if (presentation.children.length) body.append(presentation);
-    if (state.status === 'WaitingConfirmation' && state.runId === latestState()?.runId && !conversation.pending && !sending) {
+    const presentation = el('div', 'presentation'); for (const block of state.blocks || []) { const view = isReviewCard(block) ? renderConfigReview(block, message) : renderBlock(block); if (view) presentation.append(view); } if (presentation.children.length) body.append(presentation);
+    if (!state.blocks?.some(isReviewCard) && state.status === 'WaitingConfirmation' && state.runId === latestState()?.runId && !conversation.pending && !sending) {
       const actions = el('div', 'actions');
       for (const action of (state.actions || []).filter(a => allowedAction(a, state.runId))) {
         const blocked = action.id === 'approve' && state.blocks?.some(b => b.kind === 'configProposal' && b.executionAllowed === false);
@@ -449,6 +500,7 @@ function renderMessages() {
     node.scrollTop = !previous || previous.bottom ? node.scrollHeight : previous.top;
   }
   if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
+  restoreConfigFocus(configFocus);
 }
 function scheduleRender() {
   if (renderQueued) return; renderQueued = true;
@@ -456,12 +508,13 @@ function scheduleRender() {
 }
 function updateComposer() {
   const run = activeRun(), conversation = activeConversation(), pending = Boolean(conversation?.pending);
-  $('#send-button').disabled = !$('#prompt').value.trim() || sending || pending || Boolean(run);
+  const reviewBusy = selectedReviews().some(v => v.review.busy), reviewDirty = selectedReviews().some(v => v.review.dirty);
+  $('#send-button').disabled = !$('#prompt').value.trim() || sending || pending || Boolean(run) || reviewBusy || reviewDirty;
   $('#service-switch').disabled = sending;
   $('#cancel-run').hidden = !run || isTerminal(run.status) || ['WaitingConfirmation', 'Uncertain'].includes(run.status);
   $('#cancel-run').disabled = Boolean(run?.cancellationRequestedAt) || sending;
-  $('#composer-status').textContent = sending ? 'Đang gửi tin nhắn' : pending ? 'Chờ xác nhận lần gửi' : run ? statusLabels[run.status] || 'Đang xử lý' : 'Sẵn sàng trò chuyện';
-  $('#session-note').textContent = run?.status === 'WaitingConfirmation' ? 'Xem lại đề xuất và chọn hành động trước khi tiếp tục.' : run?.status === 'Uncertain' ? 'Backend chưa xác định kết quả. Chờ đối soát trước khi gửi thêm.' : '';
+  $('#composer-status').textContent = sending ? 'Đang gửi tin nhắn' : pending ? 'Chờ xác nhận lần gửi' : reviewBusy ? 'Đang xử lý cấu hình tại Backend' : reviewDirty ? 'Có cấu hình chưa lưu' : run ? statusLabels[run.status] || 'Đang xử lý' : 'Sẵn sàng trò chuyện';
+  $('#session-note').textContent = reviewDirty ? 'Lưu hoặc bỏ chỉnh sửa cấu hình trước khi gửi tin nhắn.' : run?.status === 'WaitingConfirmation' ? 'Xem lại đề xuất và chọn hành động trước khi tiếp tục.' : run?.status === 'Uncertain' ? 'Backend chưa xác định kết quả. Chờ đối soát trước khi gửi thêm.' : '';
 }
 function fitTextarea() { $('#prompt').style.height = 'auto'; $('#prompt').style.height = Math.min($('#prompt').scrollHeight, 180) + 'px'; updateComposer(); }
 function startObserver(runId = latestState()?.runId, streamFirst = false) {
@@ -474,6 +527,12 @@ function startObserver(runId = latestState()?.runId, streamFirst = false) {
     if (generation !== selection || signal.aborted) return;
     const reconciled = state.hydrated && !message.state.hydrated;
     message.state = state; persistSoon(); scheduleRender();
+    if (state.reviewUpdate) for (const view of selectedReviews()) {
+      const review = view.review, update = state.reviewUpdate;
+      if (review.card.workflowId === update.workflowId && (review.invalidationVersion || 0) < update.reviewVersion) {
+        review.invalidationVersion = update.reviewVersion; void review.refresh();
+      }
+    }
     if (reconciled) { loadActivity(state.runId); if (openActivityRuns.has(state.runId)) loadTrace(state.runId); }
   }, signal, { streamFirst }).catch(error => { if (!signal.aborted && generation === selection) { message.state.connectionError = error.message; message.state.connection = 'error'; scheduleRender(); } });
 }
@@ -505,7 +564,7 @@ async function submitPending(conversation) {
 }
 async function sendPrompt(event) {
   event.preventDefault(); const text = $('#prompt').value.trim();
-  if (!text || sending || activeRun() || activeConversation()?.pending) return;
+  if (!text || sending || activeRun() || activeConversation()?.pending || selectedReviews().some(v => v.review.busy || v.review.dirty)) return;
   if (prefs.mode === 'bearer' && !authToken) { openSettings(); return; }
   let conversation = activeConversation();
   if (!conversation) { conversation = { localId: randomId(), title: text.slice(0, 52), messages: [], createdAt: new Date().toISOString() }; conversations.unshift(conversation); selectedId = conversation.localId; }
@@ -586,6 +645,11 @@ async function confirmAction(event) {
 }
 
 $('#new-chat').addEventListener('click', newChat); $('#composer').addEventListener('submit', sendPrompt);
+window.addEventListener('beforeunload', event => {
+  if ([...configReviews.values()].some(v => v.review.dirty || v.review.attempt?.kind === 'save')) {
+    event.preventDefault(); event.returnValue = '';
+  }
+});
 $('#events-toggle').addEventListener('click', () => {
   const state = latestState();
   if (!state?.runId) { toast('Gửi tin nhắn để theo dõi streaming và events của run.'); return; }

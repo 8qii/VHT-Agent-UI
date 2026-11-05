@@ -59,10 +59,14 @@ export function formatDuration(ms) {
 }
 
 export function reduceRun(state, event) {
-  if (event.version !== 2 || !['snapshot', 'assistant.text', 'agent.progress', 'run.terminal'].includes(event.kind)) throw new Error('UNSUPPORTED_STREAM');
+  if (event.version !== 2 || !['snapshot', 'assistant.text', 'agent.progress', 'run.terminal', 'config.review.updated'].includes(event.kind)) throw new Error('UNSUPPORTED_STREAM');
   if (event.runId !== state.runId || event.sessionId !== state.sessionId) throw new Error('MISMATCHED_STREAM');
   if (!Number.isInteger(event.sequence) || event.sequence <= state.sequence) throw new Error('INVALID_SEQUENCE');
   const next = { ...state, sequence: event.sequence };
+  if (event.kind === 'config.review.updated' && typeof event.review?.workflowId === 'string'
+      && Number.isSafeInteger(event.review.reviewVersion) && event.review.reviewVersion > 0) {
+    next.reviewUpdate = { workflowId: event.review.workflowId, reviewVersion: event.review.reviewVersion };
+  }
   if (event.status != null) next.status = statusName(event.status);
   if (event.kind === 'snapshot') { next.text = event.text ?? ''; next.provisional = false; }
   if (event.kind === 'assistant.text') {
