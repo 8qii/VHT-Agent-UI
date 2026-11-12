@@ -52,15 +52,15 @@ test('provider message content accepts both strings and typed blocks as readable
  assert.match(detail.sections[0][1],/\[2\] USER\nQuestion/);
 });
 
-test('native labels change presentation only and retain the original identifier',()=>{
+test('trace titles preserve actual identifiers regardless of transport metadata',()=>{
  const call=event(1,'tool/call',{callId:'x',name:'create_mcp',arguments:{kind:'inventory'}});
  const span={stage:'tool',toolCallId:'x'};
- assert.equal(traceStep([call],span,'native').title,'Nạp nhóm Native · inventory');
+ assert.equal(traceStep([call],span,'native').title,'create_mcp · inventory');
  assert.equal(traceStep([call],span).title,'create_mcp · inventory');
- assert.equal(traceStep([call],span,'native').sections.at(-1)[1],'create_mcp');
+ assert.deepEqual(traceStep([call],span,'native'),traceStep([call],span));
  const tool=event(1,'tool/call',{callId:'x',name:'mcp__inventory__inventory_list_devices',arguments:{}});
- assert.equal(traceStep([tool],span,'native').title,'Native tool · inventory · inventory_list_devices');
- assert.equal(traceStep([], {stage:'tool',toolName:'mcp__inventory__inventory_list_devices'},'native').title,'Native tool · inventory · inventory_list_devices');
+ assert.equal(traceStep([tool],span,'native').title,'mcp__inventory__inventory_list_devices');
+ assert.equal(traceStep([], {stage:'tool',toolName:'mcp__inventory__inventory_list_devices'},'native').title,'mcp__inventory__inventory_list_devices');
 });
 test('a trace fetched before terminal is refreshed for late model requests and usage',()=>{
  let cache=mergeTracePage(null,{items:[event(1,'model.request',{}),event(2,'assistant/message',{usage:{inputTokens:100,outputTokens:5}}),event(3,'model.request',{})]});
@@ -74,7 +74,7 @@ test('a trace fetched before terminal is refreshed for late model requests and u
 
 test('new group names render without a transport hint and keep original tool IDs',()=>{
  const detail=traceStep([event(1,'tool/call',{callId:'new',name:'load_tool_group',arguments:{kind:'inventory'}})],{stage:'tool',toolCallId:'new'});
- assert.equal(detail.title,'Nạp nhóm công cụ · inventory');
+ assert.equal(detail.title,'load_tool_group · inventory');
  assert.match(detail.description,/inventory/);
  const business=traceStep([event(1,'tool/call',{callId:'read',name:'inventory__search_devices',arguments:{query:'sw139'}})],{stage:'tool',toolCallId:'read'});
  assert.equal(business.title,'inventory__search_devices');

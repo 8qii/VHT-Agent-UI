@@ -369,7 +369,7 @@ function renderActivity(state) {
     const item = el('details', `activity-row ${span.state}`), key = `${state.runId}:${span.spanId}`;
     item.open = openActivityRows.has(key);
     item.addEventListener('toggle', () => { if (!item.isConnected) return; if (item.open) openActivityRows.add(key); else openActivityRows.delete(key); });
-    const detail = traceStep(trace?.items, span, prefs.directUrl ? undefined : config.services?.[prefs.backend]?.transport);
+    const detail = traceStep(trace?.items, span);
     const title = el('summary'), info = el('div', 'activity-info');
     info.append(el('strong', '', detail.title));
     const phase = activityPhase(rows, rows.indexOf(span));
