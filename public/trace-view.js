@@ -61,14 +61,14 @@ export function traceStep(items = [], span, transport) {
       ['Model trả về (text / yêu cầu tool)', output.length ? output.map(m => contentText(m) + (m.usage ? '\n\nTokens: ' + displayTrace(m.usage) : '')).join('\n\n') : 'Chưa ghi nhận đầu ra.'],
     ], truncated: request.truncated || following.some(e => e.truncated) };
   }
-  const toolTitle = name => transport === 'native' && name === 'create_mcp' ? 'Nạp nhóm Native' : transport === 'native' && name?.startsWith('mcp__') ? 'Native tool · ' + name.slice(5).replace('__', ' · ') : name;
+  const toolTitle = name => name === 'load_tool_group' ? 'Nạp nhóm công cụ' : transport === 'native' && name === 'create_mcp' ? 'Nạp nhóm Native' : transport === 'native' && name?.startsWith('mcp__') ? 'Native tool · ' + name.slice(5).replace('__', ' · ') : name;
   const calls = items.filter(e => e.kind === 'tool/call' && e.data?.callId === span.toolCallId);
   if (calls.length !== 1) return { title: toolTitle(span.toolName) || 'Tool', missing: calls.length > 1 ? 'Trùng call ID giữa các binding; chưa thể ghép chắc chắn.' : 'Chưa có bản ghi tham số cho bước này.' };
   const call = calls[0], args = parse(call.data.arguments);
   const result = items.find(e => e.kind === 'tool/result' && e.runtimeRequestId === call.runtimeRequestId && e.runtimeSessionId === call.runtimeSessionId && e.data?.message?.toolCallId === span.toolCallId);
   const name = call.data.name || span.toolName;
-  const suffix = name === 'create_mcp' && args?.kind ? ` · ${args.kind}` : name === 'skill' && args?.name ? ` · ${args.name}` : '';
-  return { title: toolTitle(name) + suffix, description: name === 'create_mcp' ? `Nạp nhóm công cụ ${args?.kind || 'được yêu cầu'} và các nhóm phụ thuộc.` : name === 'skill' ? `Đọc hướng dẫn kỹ năng ${args?.name || 'được yêu cầu'}.` : '', failed: result?.data?.message?.isError === true,
+  const suffix = ['load_tool_group','create_mcp'].includes(name) && args?.kind ? ` · ${args.kind}` : name === 'skill' && args?.name ? ` · ${args.name}` : '';
+  return { title: toolTitle(name) + suffix, description: ['load_tool_group','create_mcp'].includes(name) ? `Nạp nhóm công cụ ${args?.kind || 'được yêu cầu'} và các nhóm phụ thuộc.` : name === 'skill' ? `Đọc hướng dẫn kỹ năng ${args?.name || 'được yêu cầu'}.` : '', failed: result?.data?.message?.isError === true,
     sections: [['Tham số gọi tool', displayTrace(args)], ['Kết quả tool trả về', result ? contentText(result.data.message) : 'Đang chờ kết quả / chưa có bản ghi kết quả.'], ...(transport === 'native' ? [['Định danh gốc trong trace (giữ để đối chiếu)', name]] : [])],
     truncated: call.truncated || result?.truncated };
 }

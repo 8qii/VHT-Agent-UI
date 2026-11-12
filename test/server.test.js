@@ -13,7 +13,7 @@ test('grouped services route to distinct upstreams with streaming and no arbitra
  targets['native-full-real']=`http://127.0.0.1:${upstreams[4].address().port}`;
  const ui=createServer();await new Promise(r=>ui.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${ui.address().port}`;
  try{
-  const config=await(await fetch(base+'/ui-config')).json();assert.notEqual(config.targets['native-grouped'],config.targets['mcp-grouped']);assert.equal(config.services['native-grouped'].sandbox,true);assert.equal(config.services['native-real'].sandbox,undefined);assert.match(config.services['native-real'].sourceNote,/khách hàng thật/);
+  const config=await(await fetch(base+'/ui-config')).json();assert.deepEqual(Object.keys(config.targets),['goose','mcp-real']);assert.equal(config.services.goose.label,'Local · localhost');assert.equal(config.services.goose.transport,'native');assert.equal(config.services['mcp-real'].transport,'native');assert.equal(config.services['mcp-real'].label,'Server · 35.0.0.102');
   for(const arm of ['native-grouped','mcp-grouped','native-real','mcp-real','native-full-real']){
    const r=await fetch(base+'/backend/'+arm+'/api/chat/runs/r/events',{headers:{'X-Demo-User':arm}});const reader=r.body.getReader();
    assert.equal(new TextDecoder().decode((await reader.read()).value),'data: '+arm+'\n\n');await reader.cancel();
@@ -66,7 +66,7 @@ test('comparison-only config keeps legacy primary routes available to existing t
  await new Promise(r=>upstream.listen(0,'127.0.0.1',r));const old=targets.goose;targets.goose=`http://127.0.0.1:${upstream.address().port}`;
  const ui=createServer();await new Promise(r=>ui.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${ui.address().port}`;
  try {
-  const config=await(await fetch(base+'/ui-config')).json();assert.deepEqual(Object.keys(config.targets),['native-full-real','native-real','mcp-real']);
+  const config=await(await fetch(base+'/ui-config')).json();assert.deepEqual(Object.keys(config.targets),['goose','mcp-real']);
   assert.equal((await fetch(base+'/backend/goose/health/ready')).status,200);
   assert.equal((await fetch(base+'/ui-config')).status,200);
  } finally {

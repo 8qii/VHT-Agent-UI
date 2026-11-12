@@ -71,3 +71,11 @@ test('a trace fetched before terminal is refreshed for late model requests and u
  assert.deepEqual([traceTotals(cache.items).modelCalls,traceTotals(cache.items).knownUsageCalls,traceTotals(cache.items).inputTokens],[3,3,600]);
  assert(!traceNeedsFinalRead(cache,true));assert(!traceNeedsFinalRead({...cache,finalized:false},false));
 });
+
+test('new group names render without a transport hint and keep original tool IDs',()=>{
+ const detail=traceStep([event(1,'tool/call',{callId:'new',name:'load_tool_group',arguments:{kind:'inventory'}})],{stage:'tool',toolCallId:'new'});
+ assert.equal(detail.title,'Nạp nhóm công cụ · inventory');
+ assert.match(detail.description,/inventory/);
+ const business=traceStep([event(1,'tool/call',{callId:'read',name:'inventory__search_devices',arguments:{query:'sw139'}})],{stage:'tool',toolCallId:'read'});
+ assert.equal(business.title,'inventory__search_devices');
+});

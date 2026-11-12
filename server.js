@@ -16,11 +16,11 @@ export const targets = {
   'mcp-grouped': process.env.VHT_MCP_GROUPED_URL || 'http://127.0.0.1:5068',
 };
 export const services = {
-  goose: { label: 'VHT Backend', caption: 'VHT-Agent-Backend' },
+  goose: { transport: 'native', label: 'Local · localhost', caption: 'localhost:5062' },
   dsh: { label: 'VHT Backend DSH', caption: 'VHT-Agent-Backend-DSH' },
   'native-full-real': { transport: 'native', label: 'Native full · dữ liệu thật', caption: 'Native full · toàn bộ tool được cấp quyền', demoUser: '00000000-0000-0000-0000-000000000001', sourceNote: 'Native full · Nguồn khách hàng thật; nạp toàn bộ schema được cấp cho lượt chạy. DB, lịch sử và file riêng; Documents vẫn theo quyền đính kèm. Cùng handler và guard với MCP grouped.' },
   'native-real': { transport: 'native', label: 'Native grouped · dữ liệu thật', caption: 'Native grouped · nạp tool theo nhóm', demoUser: '00000000-0000-0000-0000-000000000001', sourceNote: 'Native grouped · Nguồn khách hàng thật; DB, file và bucket riêng. Hỗ trợ Query, Reporting, bản nháp Device Config và Documents qua API đính kèm. Accept là thao tác riêng, có thể TRY và tạo ConfigSetup Draft; không APPLY.' },
-  'mcp-real': { label: 'MCP grouped · dữ liệu thật', caption: 'Server 5062 · service MCP hiện có', sourceNote: 'MCP grouped · Service thật hiện có trên server 35.0.0.102:5062; giữ quyền và chức năng của hệ thống hiện tại.' },
+  'mcp-real': { transport: 'native', label: 'Server · 35.0.0.102', caption: '35.0.0.102:5062' },
   'native-grouped': { transport: 'native', label: 'Native grouped', caption: 'Sandbox · JSONL → .NET worker', sandbox: true },
   'mcp-grouped': { label: 'MCP grouped', caption: 'Sandbox · MCP stdio → .NET server', sandbox: true },
 };
@@ -38,7 +38,7 @@ export function createServer() {
     res.setHeader('Referrer-Policy', 'no-referrer');
     if (url.pathname === '/ui-config' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-      const visible = process.env.VHT_COMPARE_ONLY === 'true' ? ['native-full-real', 'native-real', 'mcp-real'] : Object.keys(targets);
+      const visible = ['goose', 'mcp-real'];
       res.end(JSON.stringify({ targets: Object.fromEntries(visible.map(key => [key, targets[key]])), services: Object.fromEntries(visible.map(key => [key, services[key]])) }));
       return;
     }
