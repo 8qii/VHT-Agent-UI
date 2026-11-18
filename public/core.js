@@ -196,6 +196,22 @@ const delay = (ms, signal) => new Promise((resolve, reject) => {
 export async function observeRun(api, initial, update, signal, { streamFirst = false } = {}) {
   let state = { ...initial }, attempts = 0, polling = false;
   const emit = patch => { state = { ...state, ...patch }; update(state); };
+  let reviewedDraft;
+  async function previewSavedDraft(event) {
+    const ref = event.review?.currentProposalRef;
+    if (event.terminal || !['config.review.updated', 'snapshot'].includes(event.kind) || event.review?.operationRef
+        || ref?.runId !== state.runId || !ref.proposalId || state.hydrated || reviewedDraft === ref.proposalId) return;
+    reviewedDraft = ref.proposalId;
+    try {
+      const response = await api.getResponse(state.runId, signal);
+      if (signal.aborted || state.hydrated || isTerminal(state.status) || state.status === 'WaitingConfirmation') return;
+      const card = response.presentationBlocks?.find(block => block.kind === 'configProposal'
+        && block.proposalId === ref.proposalId && block.revision === ref.revision
+        && block.workflowId === event.review.workflowId);
+      if (card) emit({ blocks: [...state.blocks.filter(b => b.kind !== 'configProposal'), card] });
+      else reviewedDraft = undefined;
+    } catch { reviewedDraft = undefined; } // Terminal hydration or the next connection can recover.
+  }
   async function reconcile(hydrate = false) {
     const run = await api.getRun(state.runId, signal);
     const status = statusName(run.status);
@@ -246,6 +262,7 @@ export async function observeRun(api, initial, update, signal, { streamFirst = f
         emit({ connection: 'live' });
         await consumeSse(response, event => {
           state = reduceRun(state, event); update(state);
+          void previewSavedDraft(event);
           if (state.terminal) { terminal = true; streamAbort.abort(); }
           if (state.status === 'WaitingConfirmation' && !state.hydrated) { waiting = true; streamAbort.abort(); }
         }, streamSignal);

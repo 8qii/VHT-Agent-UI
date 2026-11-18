@@ -111,3 +111,45 @@ test('explicit stream read of completed run captures snapshot without resubmitti
   assert(calls[0][0].endsWith('/events')); assert(calls.every(([, method]) => method === 'GET'));
   assert.equal(final.events[0].kind, 'snapshot'); assert.equal(final.eventCount, 1); assert.equal(final.text, 'canonical'); assert.equal(final.connection, 'closed');
 });
+
+for (const kind of ['config.review.updated', 'snapshot']) test('saved-card preview before final text via '+kind, async () => {
+  const text = 'Bản nháp đã lưu';
+  const draft = { kind: 'configProposal', proposalId: 'd', revision: 1, workflowId: 'w', version: 3 };
+  const end = { ...draft, capabilities: { editContent: true } };
+  const writes = [], states = [];
+  let completed = false, published = false, finish;
+  const wrap = (kind, sequence, add={}) => ({
+    kind, version: 2, runId: 'r', sessionId: 's', sequence, status: completed ? 'Completed' : 'Running', ...add
+  });
+  const wire = event => new TextEncoder().encode('event: '+event.kind+'\ndata: '+JSON.stringify(event)+'\n\n');
+  const ref = { workflowId: 'w', reviewVersion: 1, currentProposalRef: { proposalId:'d', revision:1, runId:'r' } };
+  const api = {
+    getRun: async () => ({ status: completed ? 'Completed' : 'Running' }),
+    getResponse: async () => {
+      writes.push(completed ? 'final' : 'preview');
+      return {text: completed ? text : 'temporary text must be ignored', presentationBlocks: [completed ? end : draft]};
+    },
+    request: async () => new Response(new ReadableStream({ start(c) {
+      c.enqueue(wire(wrap(kind, 1, { review: ref })));
+      finish = () => {
+        completed = true;
+        c.enqueue(wire(wrap('run.terminal', 2, { terminal:true })));
+        c.close();
+      };
+    } }), {headers: {'content-type':'text/event-stream'}})
+  };
+  await observeRun(api, initialRun('s','r'), state => {
+    states.push(state);
+    if (!completed && !published && state.blocks.length) {
+      assert.equal(state.hydrated, false);
+      assert.equal(state.text, '');
+      assert.equal(state.status, 'Running');
+      published = true;
+      queueMicrotask(finish);
+    }
+  }, AbortSignal.timeout(4000), {streamFirst:true});
+  assert.ok(published);
+  assert.deepEqual(writes, ['preview','final']);
+  assert.deepEqual(states.at(-1).blocks,[end]);
+  assert.equal(states.at(-1).text,text);
+});
