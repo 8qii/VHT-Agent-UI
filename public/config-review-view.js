@@ -83,6 +83,7 @@ export function createConfigReviewView(review) {
       if (observation) heading.append(el('span', 'config-pair-status', statuses[observation.status] || observation.status));
       detail.append(heading);
       const content = el('div', 'config-target-body'), pair = review.pair(target.deviceId);
+      if (target.requestedChange) content.append(el('p', 'config-requested-change', `Yêu cầu: ${target.requestedChange}`));
       const panes = el('div', 'config-panes');
       for (const [field, label] of [['deploy', 'Config'], ['rollback', 'Rollback config']]) {
         const pane = el('div', 'config-pane'), head = el('div', 'config-pane-title');
@@ -197,7 +198,9 @@ export function createConfigReviewView(review) {
       const id = Number(detail.dataset.deviceId), draft = review.drafts.get(id), original = review.card.targets.find(t => t.deviceId === id);
       detail.querySelector('.config-dirty').textContent = draft ? 'Chưa lưu' : '';
       detail.querySelector('.config-edit-hint').textContent = draft && draft.deploy !== original.deploy && draft.rollback === original.rollback
-        ? 'Config đã thay đổi; hãy xem lại rollback trước khi Try/Accept.' : !(review.pair(id)?.rollback || '').trim() ? 'Thiếu rollback: vẫn lưu được, chưa thể Try/Accept cặp này.' : '';
+        ? 'Config đã thay đổi; hãy xem lại rollback trước khi Try/Accept.' : !(review.pair(id)?.rollback || '').trim()
+          ? review.card.capabilities?.accept ? 'API tạo Config Setup sẽ tự sinh rollback khi Accept.'
+            : 'Chưa có rollback; xem trạng thái và điều kiện của card trước khi Accept.' : '';
       const savePair = detail.querySelector('.config-save'); if (savePair) savePair.disabled = !draft || !review.canEdit;
       const discard = detail.querySelector('.config-discard'); if (discard) discard.disabled = !draft || review.busy;
       const tryPair = detail.querySelector('.config-try'); if (tryPair) tryPair.disabled = !review.canTry(id);

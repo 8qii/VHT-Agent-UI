@@ -89,7 +89,7 @@ export class ConfigReview {
   get canEdit() { return this.card.version === 3 && this.card.capabilities?.editContent === true && this.mutable; }
   get canAccept() { return this.card.capabilities?.accept === true && this.card.executionAllowed !== false && this.mutable && !this.dirty; }
   canTry(id) { return this.card.version === 3 && this.card.capabilities?.try === true && this.mutable && !this.dirty
-    && this.card.targets?.some(t => t.deviceId === id && t.canTry === true && t.rollback?.trim()); }
+    && this.card.targets?.some(t => t.deviceId === id && t.canTry === true); }
   pair(id) { return this.drafts.get(id) || this.card.targets?.find(t => t.deviceId === id); }
   edit(id, field, value) {
     if (!this.canEdit || !['deploy', 'rollback'].includes(field)) return;

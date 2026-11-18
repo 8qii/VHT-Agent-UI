@@ -21,6 +21,16 @@ function harness(handler = () => {}) {
 const receipt = (kind, extra = {}) => ({ operationId: 'op', workflowId: 'wf', runId: 'r1', kind,
   status: 'Succeeded', ...extra });
 
+test('empty rollback follows Backend Try and Accept capabilities without a client veto', async () => {
+  const h = harness();
+  h.review.card.targets.forEach(target => { target.rollback = ''; });
+  assert(h.review.canTry(7)); assert(h.review.canAccept);
+  h.review.card.targets[0].canTry = false;
+  assert(!h.review.canTry(7));
+  h.review.card.capabilities.accept = false;
+  assert(!h.review.canAccept);
+});
+
 test('actual workflow wire omits the polymorphic kind discriminator but retains all review references', async () => {
   const current = card(); delete current.kind;
   const review = new ConfigReview({ async request() { return { workflowId: 'wf', current, revisions: [] }; } }, card());
